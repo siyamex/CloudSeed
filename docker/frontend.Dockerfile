@@ -9,6 +9,10 @@ COPY frontend frontend
 RUN npm -w frontend run build
 
 FROM nginxinc/nginx-unprivileged:1.31-alpine
+# Pick up OS security fixes published after the base image was built, then drop back to the unprivileged user.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 EXPOSE 8081
