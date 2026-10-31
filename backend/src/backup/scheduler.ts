@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from '../config.js';
@@ -65,7 +66,7 @@ export class BackupScheduler {
 
   private async execute(id: string) {
     const { db, config, log } = this.o;
-    const file = `cloudseed-${stamp()}.csbk`;
+    const file = `cloudseed-${stamp()}-${randomBytes(3).toString('hex')}.csbk`; // the suffix keeps two backups in the same second apart
     const out = path.resolve(config.BACKUP_DIR, file);
     try {
       const passphrase = await readPassphrase(config);
@@ -102,7 +103,7 @@ export class BackupScheduler {
         ORDER BY finished_at DESC OFFSET $1`, [config.BACKUP_KEEP])).rows;
     for (const r of old) {
       // the name comes from our own table, but never trust it enough to leave the backup directory
-      if (r.file_name !== path.basename(r.file_name) || !/^cloudseed-[0-9-]+\.csbk$/.test(r.file_name)) continue;
+      if (r.file_name !== path.basename(r.file_name) || !/^cloudseed-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}\.csbk$/.test(r.file_name)) continue;
       await rm(path.join(path.resolve(config.BACKUP_DIR), r.file_name), { force: true }).catch((err) => log.warn({ err }, 'could not delete an old backup'));
       await db.query(`UPDATE backup_runs SET pruned_at = now() WHERE id = $1`, [r.id]);
     }

@@ -12,6 +12,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { unzipSync } from 'fflate';
 import pg from 'pg';
 import { makeBytes, startOrigin } from '../backend/test/origin.js';
 import { startFakeTelegram } from '../backend/test/fake-telegram.js';
@@ -49,6 +50,7 @@ const env: NodeJS.ProcessEnv = {
   FFMPEG_PATH: ffmpegPath, FFPROBE_PATH: ffprobePath, MEDIA_WORKDIR: path.join(tmp, 'media'),
   ENCRYPTION_KEY: Buffer.alloc(32, 11).toString('base64'), TELEGRAM_API_BASE: telegram.url, TELEGRAM_LEASE_SECONDS: '3', TELEGRAM_CHAT_INTERVAL_MS: '0', WORKER_ALIVE_FILE: path.join(tmp, 'alive'),
   METRICS_TOKEN: 'smoke-metrics-token-1234567890',
+  BACKUP_INTERVAL_HOURS: '24', BACKUP_PASSPHRASE: 'smoke scheduled passphrase', BACKUP_DIR: path.join(tmp, 'backups'), BACKUP_KEEP: '3',
 };
 
 function start(name: string, script: string): ChildProcess {
@@ -249,6 +251,20 @@ try {
   const dlR = await fetch(`${base}/public/shares/${share2.token}/download`);
   check('Sharing: a revoked link stops working at once', dlR.status === 410 && ((await dlR.json()) as any).error.code === 'share_revoked');
 
+  // folder link: browse and download everything as a ZIP, anonymously
+  const folder = (await (await call('POST', '/folders', { name: 'Shared folder', parentId: null })).json()) as any;
+  const inFolder = new FormData();
+  inFolder.append('file', new Blob(['folder file contents']), 'inside.txt');
+  const up2 = await fetch(`${base}/files/upload?folder=${folder.id}`, { method: 'POST', headers: { cookie: `cs_session=${token}`, 'x-csrf-token': csrf }, body: inFolder });
+  check('Folder sharing: a file is uploaded into the folder', up2.status === 201);
+  const fshare = (await (await call('POST', '/shares', { folderId: folder.id, expiresInHours: 2, acknowledgePublic: true })).json()) as any;
+  const listing = (await (await fetch(`${base}/public/shares/${fshare.token}/list`)).json()) as any;
+  check('Folder sharing: an anonymous visitor can list the folder', listing.files?.length === 1 && listing.files[0].name === 'inside.txt' && listing.path[0].name === 'Shared folder');
+  const zipRes = await fetch(`${base}/public/shares/${fshare.token}/zip`);
+  const unzipped = unzipSync(new Uint8Array(await zipRes.arrayBuffer()));
+  check('Folder sharing: the ZIP is a valid archive with the exact file',
+    zipRes.status === 200 && zipRes.headers.get('content-type') === 'application/zip' && Buffer.from(unzipped['Shared folder/inside.txt']!).toString() === 'folder file contents', Object.keys(unzipped).join());
+
   // ---- 8. Administration, health and metrics ----
   const anonAdmin = await fetch(`${base}/admin/overview`);
   check('Admin: the admin API requires a session', anonAdmin.status === 401);
@@ -266,6 +282,28 @@ try {
   const mText = await mOk.text();
   check('Metrics: needs the bearer token, then serves Prometheus text without personal data',
     m401.status === 401 && mOk.status === 200 && mText.includes('cloudseed_download_jobs{state="completed"}') && !mText.includes('smoke@example.com'));
+
+  // The worker process made a scheduled backup on start-up (BACKUP_INTERVAL_HOURS), while downloads were running.
+  const sched = await until(async () => {
+    const list = (await (await call('GET', '/admin/backups')).json()) as any;
+    const r = list.runs.find((x: any) => ['succeeded', 'failed'].includes(x.status));
+    return r && { r, list };
+  }, 60000, 'the scheduled backup');
+  check('Backups: the worker made a scheduled backup that was verified after writing', sched.r.status === 'succeeded' && sched.r.verified === true && sched.r.trigger === 'schedule', sched.r.error ?? '');
+  const schedFile = path.join(tmp, 'backups', sched.r.fileName ?? 'missing');
+  const sv = await new Promise<{ code: number; out: string }>((resolve) => {
+    const c = spawn(process.execPath, [path.join(root, 'backend/dist/cli.js'), 'verify', schedFile], { env: { ...env, BACKUP_PASSPHRASE: 'smoke scheduled passphrase' }, cwd: path.join(root, 'backend') });
+    let out = ''; c.stdout.on('data', (d) => (out += d)); c.stderr.on('data', (d) => (out += d)); c.on('exit', (code) => resolve({ code: code ?? -1, out }));
+  });
+  check('Backups: the CLI can open the scheduled backup with its passphrase', sv.code === 0 && /^OK/m.test(sv.out), sv.out.slice(0, 200));
+  const manual = await call('POST', '/admin/backups/run', {});
+  check('Backups: an administrator can request a backup now', manual.status === 202);
+  const after = await until(async () => {
+    const list = (await (await call('GET', '/admin/backups')).json()) as any;
+    const r = list.runs.find((x: any) => x.trigger === 'manual' && ['succeeded', 'failed'].includes(x.status));
+    return r;
+  }, 60000, 'the requested backup');
+  check('Backups: the requested backup is made by the worker and verified', after.status === 'succeeded' && after.verified === true, after.error ?? '');
 
   // ---- 9. Backup, verify, restore and reconcile with the built CLI, while the app keeps running ----
   const cli = (args: string[], over: NodeJS.ProcessEnv = {}) => new Promise<{ code: number; out: string }>((resolve) => {
@@ -300,6 +338,9 @@ try {
   check('Reconcile: the restored system is fully consistent (database and files agree)', rc.code === 0 && /consistent/.test(rc.out), rc.out.slice(-500));
   const rc0 = await cli(['reconcile']);
   check('Reconcile: the live system is consistent too', rc0.code === 0, rc0.out.slice(-500));
+  const drill = await cli(['restore-test', bak]);
+  check('Restore test: a backup is proven restorable in a throwaway database, which is removed again',
+    drill.code === 0 && /RESTORE TEST PASSED/.test(drill.out) && (await admin.query(`SELECT 1 FROM pg_database WHERE datname LIKE 'cloudseed_drill_%'`)).rowCount === 0, drill.out.slice(-400));
   const again = await cli(['restore', bak, '--yes'], restoredEnv);
   check('Restore: refuses a database that already has data', again.code === 1 && /not empty/.test(again.out));
   await admin.end();

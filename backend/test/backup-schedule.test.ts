@@ -51,7 +51,7 @@ describe('the schedule', () => {
     expect(id).not.toBeNull();
     const [r] = await runs();
     expect(r).toMatchObject({ trigger: 'schedule', status: 'succeeded', verified: true, missing_count: 0, corrupt_count: 0, error: null });
-    expect(r.file_name).toMatch(/^cloudseed-\d{8}-\d{6}\.csbk$/);
+    expect(r.file_name).toMatch(/^cloudseed-\d{8}-\d{6}-[0-9a-f]{6}\.csbk$/);
     expect(r.object_count).toBe(1);
     expect(Number(r.bytes)).toBe((await stat(path.join(dir, 'a', r.file_name))).size);
     expect((await files()).includes(r.file_name)).toBe(true);
@@ -75,11 +75,13 @@ describe('the schedule', () => {
 
   it('two workers at once produce exactly one backup', async () => {
     await reset();
-    const before = (await files()).length;
+    const before = await files();
     const [a, b] = await Promise.all([scheduler().cycle(), scheduler().cycle()]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     expect(await runs()).toHaveLength(1);
-    expect((await files()).length).toBe(Math.min(2, before + 1)); // keep=2 applies
+    const after = await files();
+    expect(after.length - before.length).toBe(1); // one new file, not two
+    expect(after).toContain((await runs())[0].file_name);
   });
 
   it('keeps only the newest N verified backups and leaves unrelated files alone', async () => {
