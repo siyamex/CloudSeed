@@ -5,7 +5,7 @@ import { buildAuthUrl, exchangeAndVerify, type IdentityClaims } from '../auth/oi
 import { createSession, randomToken, sha256 } from '../auth/session.js';
 import { cookieName, requireAuth, type Deps } from '../app.js';
 import type { Db } from '../db/index.js';
-import { HttpError } from '../errors.js';
+import { HttpError, forbidden } from '../errors.js';
 
 const PROVIDER = 'google';
 
@@ -57,7 +57,28 @@ export const authRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
   app.get('/config', async () => ({
     googleConfigured: oidc !== null,
     registrationPolicy: config.REGISTRATION_POLICY,
+    devLogin: config.DEV_LOGIN,
   }));
+
+  if (config.DEV_LOGIN) {
+    app.log.warn('DEV_LOGIN is on: anyone at this computer can sign in without Google. Development use only.');
+    /** Signs in the configured test user. Only for requests that come from this very machine. */
+    app.get('/dev-login', async (req, reply) => {
+      const from = req.socket.remoteAddress ?? '';
+      if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(from) || req.headers['x-forwarded-for']) throw forbidden('Dev login only works from the computer the server runs on');
+      const email = config.DEV_LOGIN_EMAIL.trim().toLowerCase();
+      let userId = (await db.query<{ id: string }>(`SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'`, [email])).rows[0]?.id;
+      if (!userId) {
+        const out = await resolveUser(db, deps, { sub: 'dev-login', email, emailVerified: true, name: 'Dev User' }, req.ip);
+        if ('error' in out) return reply.redirect(`/?auth_error=${out.error}`);
+        userId = out.userId;
+      }
+      const token = await createSession(db, userId, config.SESSION_TTL_HOURS, { ua: req.headers['user-agent'], ip: req.ip });
+      await db.query(`INSERT INTO audit_logs (user_id, action, ip) VALUES ($1, 'auth.dev_login', $2)`, [userId, req.ip]);
+      reply.setCookie(cookieName(config), token, { httpOnly: true, secure: config.cookieSecure, sameSite: 'lax', path: '/', maxAge: config.SESSION_TTL_HOURS * 3600 });
+      return reply.redirect('/');
+    });
+  }
 
   app.get('/google/login', authLimit, async (req, reply) => {
     if (!oidc) throw new HttpError(503, 'oauth_not_configured', 'Google sign-in is not configured on this server');

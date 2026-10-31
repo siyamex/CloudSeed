@@ -33,7 +33,7 @@ telegram.addChat({ id: CHAT.id, type: 'supergroup', title: CHAT.title }, { [BOT.
 
 const env: NodeJS.ProcessEnv = {
   ...process.env, NODE_ENV: 'development', LOG_LEVEL: 'warn', PORT: String(API_PORT), PUBLIC_URL: WEB_ORIGIN,
-  DATABASE_URL: postgres.adminUrl, MIGRATIONS_DIR: path.join(root, 'migrations'), SESSION_SECRET: 'x'.repeat(40), METRICS_TOKEN: 'ui-stack-metrics-token-123',
+  DATABASE_URL: postgres.adminUrl, MIGRATIONS_DIR: path.join(root, 'migrations'), SESSION_SECRET: 'x'.repeat(40), METRICS_TOKEN: 'ui-stack-metrics-token-123', DEV_LOGIN: 'true', DEV_LOGIN_EMAIL: 'demo@example.com', ADMIN_EMAILS: 'demo@example.com',
   LOCAL_STORAGE_ROOT: path.join(tmp, 'storage'), LOCAL_TMP_DIR: path.join(tmp, 'tmp'), DOWNLOAD_WORKDIR: path.join(tmp, 'downloads'),
   DEFAULT_USER_QUOTA_BYTES: String(500 * 1024 * 1024), MAX_FILE_SIZE_BYTES: String(100 * 1024 * 1024), DB_POOL_MAX: '3',
   ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'), TELEGRAM_API_BASE: telegram.url, TELEGRAM_CHAT_INTERVAL_MS: '300',
@@ -100,4 +100,15 @@ for (const name of ['long.webm', 'long.srt', 'clip.webm', 'old.avi', 'tone.mp3',
 }
 writeFileSync(out, JSON.stringify({ apiPort: API_PORT, webOrigin: WEB_ORIGIN, cookieName: 'cs_session', token, csrf, bot: BOT, chat: CHAT, uploaded, logs }, null, 2));
 console.log('READY', out);
+
+// The web UI too, so one command is enough: `npm run ui-stack`, then open the address below.
+if (process.env.UI_NO_WEB !== '1') {
+  const webLog = openSync(path.join(tmp, 'web.log'), 'a');
+  const vite = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), '--port', String(new URL(WEB_ORIGIN).port || 5199), '--strictPort'],
+    { cwd: path.join(root, 'frontend'), env: { ...process.env, API_URL: `http://127.0.0.1:${API_PORT}` }, stdio: ['ignore', webLog, webLog] });
+  procs.push(vite);
+  console.log(`
+Open ${WEB_ORIGIN}  ->  click "Sign in as the local test user".
+This is a throwaway demo: its data lives in a temporary folder and disappears when you stop it (Ctrl+C).`);
+}
 setInterval(() => undefined, 1 << 30);

@@ -24,7 +24,9 @@ export async function startFakeClamd(opts: { maxStream?: number } = {}): Promise
   let fail: 'drop' | 'error' | 'slow' | null = null;
   const state = { scans: 0, lastBytes: 0 };
   const maxStream = opts.maxStream ?? 25 * 1024 * 1024;
+  const open = new Set<net.Socket>();
   const server = net.createServer((sock) => {
+    open.add(sock); sock.on('close', () => open.delete(sock));
     let buf = Buffer.alloc(0);
     let started = false;
     const data: Buffer[] = [];
@@ -72,6 +74,6 @@ export async function startFakeClamd(opts: { maxStream?: number } = {}): Promise
     get scans() { return state.scans; },
     get lastBytes() { return state.lastBytes; },
     failNext(mode) { fail = mode; },
-    close: () => new Promise((r) => { server.close(() => r()); server.closeAllConnections?.(); }),
+    close: () => new Promise((r) => { server.close(() => r()); for (const c of open) c.destroy(); }),
   };
 }

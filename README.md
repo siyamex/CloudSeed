@@ -36,6 +36,20 @@ Open http://localhost:8080. The `migrate` service applies migrations before the 
 
 Without Google credentials the app runs but the login page shows a clear "not configured" state.
 
+## Try it on your computer, without Docker
+
+Needs only Node.js 24 (no PostgreSQL install, no Google account):
+
+```bash
+npm install
+npm run build
+npm run ui-stack
+```
+
+Then open http://localhost:5199 and click **Sign in as the local test user**. This starts a throwaway stack on your machine: a bundled PostgreSQL, the API, the worker, the web UI, a fake Telegram server and sample media. The test user is an administrator, so every screen is available. **Everything lives in a temporary folder and disappears when you stop it with Ctrl+C**, so use it to look around, not to keep files. The "local test user" button exists only when `DEV_LOGIN=true`, answers only to requests from the same computer, and the server refuses to start with it in production.
+
+To keep your data without Docker, install PostgreSQL 15 or newer, create a database, copy `.env.example` to `.env`, set `DATABASE_URL` and either the `GOOGLE_*` values or `DEV_LOGIN=true` (development only), then run `npm run dev:backend`, `npm run dev:worker` and `npm -w frontend run dev` in three terminals and open http://localhost:5173.
+
 ## Google sign-in setup
 
 1. Google Cloud Console → create/select a project → **APIs & Services → OAuth consent screen**. Choose *External* (or *Internal* for Workspace), fill in app name and support email. Scopes: only `openid`, `email`, `profile` (CloudSeed requests nothing else; no Drive or Gmail access).

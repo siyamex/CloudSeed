@@ -17,6 +17,12 @@ const schema = z.object({
   GOOGLE_REDIRECT_URI: z.string().default(''),
   /** Comma-separated emails that become admin on first verified login. */
   ADMIN_EMAILS: z.string().default(''),
+  /**
+   * DEVELOPMENT ONLY. Adds a "sign in as a local test user" button that works from this computer without Google. It is refused
+   * outright when NODE_ENV=production, and the endpoint answers only to requests that come from the machine itself.
+   */
+  DEV_LOGIN: bool.default(false),
+  DEV_LOGIN_EMAIL: z.string().default('dev@example.com'),
   REGISTRATION_POLICY: z.enum(['open', 'closed']).default('open'),
 
   /** General API budget per client IP per minute. Raise it behind a shared proxy/NAT with many users. */
@@ -164,6 +170,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('Invalid configuration: BACKUP_INTERVAL_HOURS needs BACKUP_PASSPHRASE or BACKUP_PASSPHRASE_FILE');
   }
   if (c.BACKUP_PASSPHRASE && c.BACKUP_PASSPHRASE.length < 12) throw new Error('Invalid configuration: BACKUP_PASSPHRASE must be at least 12 characters');
+
+  if (c.DEV_LOGIN && c.NODE_ENV === 'production') throw new Error('Invalid configuration: DEV_LOGIN must never be enabled in production');
 
   if (c.NODE_ENV === 'production') {
     const problems: string[] = [];

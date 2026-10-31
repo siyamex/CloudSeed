@@ -14,7 +14,7 @@ const ERRORS: Record<string, string> = {
 };
 
 export function Login({ dark, toggleDark }: { dark: boolean; toggleDark: () => void }) {
-  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => api<{ googleConfigured: boolean }>('/auth/config') });
+  const cfg = useQuery({ queryKey: ['auth-config'], queryFn: () => api<{ googleConfigured: boolean; devLogin?: boolean }>('/auth/config') });
   const err = new URLSearchParams(location.search).get('auth_error');
   const configured = cfg.data?.googleConfigured;
 
@@ -37,6 +37,12 @@ export function Login({ dark, toggleDark }: { dark: boolean; toggleDark: () => v
             className="flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-medium text-accent-fg hover:opacity-90">
             Continue with Google
           </a>
+        )}
+        {cfg.data?.devLogin && (
+          <div className="mt-4 border-t border-line pt-4">
+            <a href="/api/v1/auth/dev-login" className="flex w-full items-center justify-center rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-line/50">Sign in as the local test user</a>
+            <p className="mt-2 text-xs text-muted">Development mode: this works only on the computer running the server and is never available in production.</p>
+          </div>
         )}
       </div>
     </div>
