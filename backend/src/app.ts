@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { downloadRoutes } from './routes/downloads.js';
 import type { Guard } from './downloads/ssrf.js';
+import { archiveRoutes } from './routes/archives.js';
 import { fileRoutes } from './routes/files.js';
 import { mediaRoutes } from './routes/media.js';
 import { accountRoutes } from './routes/account.js';
@@ -139,6 +140,7 @@ export async function buildApp(given: Deps): Promise<FastifyInstance> {
   await app.register(authRoutes(deps), { prefix: '/api/v1/auth' });
   await app.register(adminAuthRoutes(deps), { prefix: '/api/v1' });
   await app.register(fileRoutes(deps), { prefix: '/api/v1' });
+  await app.register(archiveRoutes(deps), { prefix: '/api/v1' });
   await app.register(trashRoutes(deps), { prefix: '/api/v1' });
   await app.register(shareRoutes(deps), { prefix: '/api/v1' });
   await app.register(mediaRoutes(deps), { prefix: '/api/v1' });

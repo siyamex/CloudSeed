@@ -2,27 +2,120 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * "Liquid glass" look: a soft coloured backdrop, translucent frosted panels with a bright top edge, large radii, pill buttons.
+ * Every screen already uses a few colour names (surface, line, bg, muted, accent), so the whole app is re-skinned from here.
+ * Text sits on panels that are at least ~55 % opaque, and the muted/accent colours were chosen to keep WCAG AA contrast on the
+ * lightest and darkest parts of the backdrop in both themes. People who ask their system for reduced transparency get solid panels.
+ */
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-line: var(--line);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --color-bg: var(--field);          /* form fields and inset areas: a slightly clearer glass than the panels */
+  --color-surface: var(--glass);     /* panels */
+  --color-line: var(--divider);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-danger: var(--danger);
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.125rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
 }
 
 :root {
-  --bg: #f8f9fb; --surface: #ffffff; --line: #e4e7ec; --fg: #101828; --muted: #667085;
-  --accent: #4f46e5; --accent-fg: #ffffff; --danger: #d92d20;
+  color-scheme: light;
+  --page: #eef1f8;
+  --glass: rgba(255, 255, 255, 0.54);
+  --glass-solid: #f8f9fd;
+  --glass-edge: rgba(255, 255, 255, 0.78);
+  --glass-shine: rgba(255, 255, 255, 0.9);
+  --glass-shadow: 0 12px 40px -14px rgba(40, 56, 120, 0.28), 0 2px 6px rgba(40, 56, 120, 0.06);
+  --field: rgba(255, 255, 255, 0.5);
+  --divider: rgba(20, 30, 60, 0.11);
+  --fg: #0f1729;
+  --muted: #4f5a74;
+  --accent: #5856d6;
+  --accent-fg: #ffffff;
+  --danger: #c8261b;
+  --halo-1: rgba(100, 140, 255, 0.62);
+  --halo-2: rgba(180, 110, 255, 0.5);
+  --halo-3: rgba(255, 130, 170, 0.42);
+  --halo-4: rgba(60, 205, 185, 0.4);
 }
 .dark {
-  --bg: #0c0e12; --surface: #14171d; --line: #262b34; --fg: #eceff4; --muted: #8b93a1;
-  --accent: #818cf8; --accent-fg: #0c0e12; --danger: #f97066;
+  color-scheme: dark;
+  --page: #080a12;
+  --glass: rgba(30, 34, 50, 0.55);
+  --glass-solid: #151927;
+  --glass-edge: rgba(255, 255, 255, 0.16);
+  --glass-shine: rgba(255, 255, 255, 0.22);
+  --glass-shadow: 0 14px 44px -14px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --field: rgba(255, 255, 255, 0.07);
+  --divider: rgba(255, 255, 255, 0.12);
+  --fg: #eef1f8;
+  --muted: #aab2c5;
+  --accent: #a3a1ff;
+  --accent-fg: #0b0d18;
+  --danger: #ff8077;
+  --halo-1: rgba(70, 100, 230, 0.42);
+  --halo-2: rgba(140, 70, 220, 0.34);
+  --halo-3: rgba(220, 80, 140, 0.26);
+  --halo-4: rgba(30, 150, 140, 0.26);
 }
 
-body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+html { background: var(--page); }
+body { min-height: 100vh; color: var(--fg); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; background: transparent; }
+/* The coloured backdrop is its own fixed layer (background-attachment: fixed is unreliable on phones) */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60rem 42rem at 8% -8%, var(--halo-1), transparent 62%),
+    radial-gradient(50rem 40rem at 98% 6%, var(--halo-2), transparent 60%),
+    radial-gradient(56rem 46rem at 72% 108%, var(--halo-3), transparent 62%),
+    radial-gradient(42rem 32rem at -6% 92%, var(--halo-4), transparent 62%),
+    var(--page);
+}
+
+/* ---- the glass itself: every panel in the app is a .bg-surface ---- */
+.bg-surface {
+  -webkit-backdrop-filter: blur(26px) saturate(185%);
+  backdrop-filter: blur(26px) saturate(185%);
+  border-color: var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-shine), inset 0 -1px 0 rgba(255, 255, 255, 0.06), var(--glass-shadow);
+}
+/* clear fields: a pressed-in pane rather than a second panel */
+.bg-bg {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 2px rgba(20, 30, 60, 0.1);
+}
+.dark .bg-bg { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35); }
+input.bg-bg, select.bg-bg, textarea.bg-bg { border-color: var(--divider); }
+input.bg-bg:focus, select.bg-bg:focus, textarea.bg-bg:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+
+/* modal dialogs float above a blurred, dimmed page */
+dialog { animation: glass-in 0.18s ease-out; }
+dialog::backdrop { background: rgba(14, 18, 36, 0.38); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+@keyframes glass-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 0.5rem; }
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+
+/* ---- fallbacks: no blur support, reduced transparency, forced colours: solid panels ---- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .bg-surface { background-color: var(--glass-solid); }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .bg-surface, .bg-bg { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .bg-surface { background-color: var(--glass-solid); }
+  dialog::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(0, 0, 0, 0.55); }
+}
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* white text on the (lighter) dark-theme red would be hard to read: use dark text there */
+.dark .bg-danger.text-white { color: #2a0a07; }

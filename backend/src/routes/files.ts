@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { adapterFor, requireAuth, type Deps } from '../app.js';
 import type { Db } from '../db/index.js';
 import { HttpError, badRequest, conflict, notFound } from '../errors.js';
-import { NIL, deleteObjects, descendantIds, insertFileRecord, trashFiles, trashFolders, type ObjectRef } from '../files/ops.js';
+import { NIL, deleteObjects, descendantIds, freeName, insertFileRecord, trashFiles, trashFolders, type ObjectRef } from '../files/ops.js';
 import { TYPE_FILTERS, contentDisposition, mimeFromName, parseRange, sanitizeName, validateName } from '../files/util.js';
 import { StorageLimitError } from '../storage/types.js';
 
@@ -266,6 +266,79 @@ export const fileRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
     const n = await db.tx((t) => trashFiles(t, a.userId, [id]));
     if (n === 0) throw notFound('File not found');
     return reply.status(204).send();
+  });
+
+  /**
+   * Copies files and folders (with everything inside) into another folder. Each copy is a separate stored object, so
+   * deleting or editing one never touches the other. Names that clash are numbered ("a (1).txt"). The quota is checked
+   * up front for the whole job and again per file; a partial copy is rolled back file by file when something fails.
+   */
+  app.post('/files/copy', async (req) => {
+    const a = requireAuth(req);
+    const b = z.object({
+      fileIds: z.array(uuid).max(500).default([]), folderIds: z.array(uuid).max(100).default([]),
+      targetFolderId: uuid.nullable().default(null),
+    }).parse(req.body);
+    if (b.targetFolderId) await ownedFolder(db, a.userId, b.targetFolderId);
+    // Everything to copy: chosen files, plus every file inside the chosen folders
+    const allFolders = b.folderIds.length ? await descendantIds(db, a.userId, b.folderIds) : [];
+    if (b.targetFolderId && allFolders.includes(b.targetFolderId)) throw badRequest('Cannot copy a folder into itself', 'invalid_copy');
+    const srcFiles = (await db.query<{ id: string; folder_id: string | null; name: string; size_bytes: number; storage_key: string; storage_provider_kind: string }>(
+      `SELECT id, folder_id, name, size_bytes, storage_key, storage_provider_kind FROM files
+        WHERE user_id = $1 AND deleted_at IS NULL AND status = 'ready'
+          AND (id = ANY($2::uuid[]) OR folder_id = ANY($3::uuid[])) ORDER BY id`, [a.userId, b.fileIds, allFolders])).rows;
+    if (srcFiles.length > 2000) throw badRequest('Too many files to copy at once (limit 2000)', 'too_many');
+    const total = srcFiles.reduce((n, f) => n + Number(f.size_bytes), 0);
+    const quota = (await db.query<{ quota_bytes: number; used_bytes: number }>(`SELECT quota_bytes, used_bytes FROM storage_quotas WHERE user_id = $1`, [a.userId])).rows[0];
+    if (!quota) throw new HttpError(500, 'no_quota', 'Storage quota is not initialised for this account');
+    if (total > Math.max(0, quota.quota_bytes - quota.used_bytes)) throw new HttpError(413, 'quota_exceeded', 'Not enough storage space to copy this');
+
+    const folderRows = allFolders.length ? (await db.query<{ id: string; parent_id: string | null; name: string }>(
+      `SELECT id, parent_id, name FROM folders WHERE user_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`, [a.userId, allFolders])).rows : [];
+    const made: ObjectRef[] = [];
+    const createdFolders: string[] = [];
+    let copiedFiles = 0;
+    const copyOne = async (f: (typeof srcFiles)[number], dest: string | null) => {
+      const id = randomUUID();
+      const key = `${id.slice(0, 2)}/${id.slice(2, 4)}/${id}`;
+      const put = await storage.put(key, await adapterFor(deps, f.storage_provider_kind).get(f.storage_key), { maxBytes: Number(f.size_bytes) + 1 });
+      made.push({ key, kind: storage.kind });
+      await db.tx((t) => insertFileRecord(t, { id, userId: a.userId, folderId: dest, name: f.name, onConflict: 'rename', size: put.size, sha256: put.sha256, key, kind: storage.kind }));
+      copiedFiles++;
+    };
+    try {
+      // Folders first (parents before children), remembering where each copy landed
+      const destOf = new Map<string, string | null>();
+      const byParent = (p: string | null) => folderRows.filter((f) => (f.parent_id ?? null) === p);
+      const copyTree = async (src: { id: string; name: string }, parent: string | null) => {
+        const name = await freeName(db, a.userId, parent, src.name, 'folders');
+        const ins = await db.query<{ id: string }>(`INSERT INTO folders (user_id, parent_id, name) VALUES ($1, $2, $3) RETURNING id`, [a.userId, parent, name]);
+        const newId = ins.rows[0]!.id;
+        createdFolders.push(newId);
+        destOf.set(src.id, newId);
+        for (const child of byParent(src.id)) await copyTree(child, newId);
+      };
+      for (const id of b.folderIds) {
+        const f = folderRows.find((r) => r.id === id);
+        if (f) await copyTree(f, b.targetFolderId);
+      }
+      for (const f of srcFiles) {
+        const dest = b.fileIds.includes(f.id) && !(f.folder_id && destOf.has(f.folder_id)) ? b.targetFolderId : destOf.get(f.folder_id ?? '');
+        if (dest === undefined) continue;
+        await copyOne(f, dest);
+      }
+    } catch (e) {
+      // Undo: delete the new objects, rows, and quota charge
+      await db.tx(async (t) => {
+        const r = await t.query<{ size_bytes: number }>(`DELETE FROM files WHERE user_id = $1 AND storage_key = ANY($2::text[]) RETURNING size_bytes`, [a.userId, made.map((m) => m.key)]);
+        const freed = r.rows.reduce((n, x) => n + Number(x.size_bytes), 0);
+        if (freed) await t.query(`UPDATE storage_quotas SET used_bytes = GREATEST(0, used_bytes - $2) WHERE user_id = $1`, [a.userId, freed]);
+        await t.query(`DELETE FROM folders WHERE user_id = $1 AND id = ANY($2::uuid[])`, [a.userId, createdFolders]);
+      }).catch((err) => app.log.error({ err }, 'copy rollback failed'));
+      await removeObjects(made);
+      throw e;
+    }
+    return { copiedFiles, copiedFolders: createdFolders.length };
   });
 
   app.post('/files/bulk-delete', async (req) => {

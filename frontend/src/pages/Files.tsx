@@ -1,7 +1,7 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Download, Link2, Send, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload, X } from 'lucide-react';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronRight, Copy, Download, FolderInput, PackageOpen, Link2, Send, File as FileIcon, Folder, FolderPlus, Pencil, Search, Trash2, Upload, X } from 'lucide-react';
 import { useRef, useState, type DragEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, api, formatBytes, uploadFile, type FileItem, type FolderItem, type Listing } from '../api';
 import { Dialog, btnDanger, btnGhost, btnPrimary } from '../components/Dialog';
 import { SendToTelegram } from '../components/SendToTelegram';
@@ -30,7 +30,8 @@ export function Files() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [dialog, setDialog] = useState<null | { kind: 'mkdir' } | { kind: 'rename'; entry: Entry } | { kind: 'delete'; entries: Entry[] }>(null);
+  const [dialog, setDialog] = useState<null | { kind: 'mkdir' } | { kind: 'rename'; entry: Entry } | { kind: 'delete'; entries: Entry[] } | { kind: 'move' | 'copy'; entries: Entry[] }>(null);
+  const [dest, setDest] = useState<string>('root');
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [telegramFiles, setTelegramFiles] = useState<FileItem[] | null>(null);
   const [shareFile, setShareFile] = useState<{ item: Pick<FileItem, 'id' | 'name' | 'sharingDisabled'>; kind: 'file' | 'folder' } | null>(null);
@@ -51,6 +52,7 @@ export function Files() {
     getNextPageParam: (last) => last.nextCursor,
   });
 
+  const allFolders = useQuery({ queryKey: ['folders-all'], queryFn: () => api<{ folders: { id: string; parentId: string | null; name: string }[] }>('/folders'), enabled: dialog?.kind === 'move' || dialog?.kind === 'copy' });
   const first = list.data?.pages[0];
   const entries: Entry[] = list.data
     ? [...(first?.folders ?? []).map((item): Entry => ({ kind: 'folder', item })),
@@ -91,6 +93,34 @@ export function Files() {
     if (dialog.kind === 'rename') {
       const e = dialog.entry;
       mutate.mutate(() => api(`/${e.kind === 'folder' ? 'folders' : 'files'}/${e.item.id}`, { method: 'PATCH', body: { name } }));
+    }
+  };
+  /** Folder paths for the destination picker; folders being moved/copied (and their children) are left out. */
+  const destinations = (() => {
+    const fs = allFolders.data?.folders ?? [];
+    const byId = new Map(fs.map((f) => [f.id, f]));
+    const pathOf = (id: string): string => { const f = byId.get(id); return f ? (f.parentId ? `${pathOf(f.parentId)} / ` : '') + f.name : ''; };
+    const blocked = new Set<string>();
+    if (dialog?.kind === 'move' || dialog?.kind === 'copy') {
+      const roots = dialog.entries.filter((e) => e.kind === 'folder').map((e) => e.item.id);
+      const down = (id: string) => { blocked.add(id); fs.filter((f) => f.parentId === id).forEach((f) => down(f.id)); };
+      roots.forEach(down);
+    }
+    return fs.filter((f) => !blocked.has(f.id)).map((f) => ({ id: f.id, path: pathOf(f.id) })).sort((a, b) => a.path.localeCompare(b.path));
+  })();
+  const confirmTransfer = () => {
+    if (dialog?.kind !== 'move' && dialog?.kind !== 'copy') return;
+    const { kind, entries: items } = dialog;
+    const target = dest === 'root' ? null : dest;
+    if (kind === 'copy') {
+      mutate.mutate(() => api('/files/copy', { method: 'POST', body: {
+        fileIds: items.filter((e) => e.kind === 'file').map((e) => e.item.id),
+        folderIds: items.filter((e) => e.kind === 'folder').map((e) => e.item.id), targetFolderId: target } }));
+    } else {
+      mutate.mutate(async () => {
+        for (const e of items) await api(`/${e.kind === 'folder' ? 'folders' : 'files'}/${e.item.id}`, e.kind === 'folder'
+          ? { method: 'PATCH', body: { parentId: target } } : { method: 'PATCH', body: { folderId: target } });
+      });
     }
   };
   const confirmDelete = () => {
@@ -151,6 +181,8 @@ export function Files() {
             <button className={btnGhost} disabled={!selectedEntries.some((e) => e.kind === 'file')}
               title={selectedEntries.some((e) => e.kind === 'folder') ? 'Folders are skipped: only files can be sent' : undefined}
               onClick={() => setTelegramFiles(selectedEntries.flatMap((e) => (e.kind === 'file' ? [e.item] : [])))}><Send size={14} className="mr-1 inline" aria-hidden />Send to Telegram</button>
+            <button className={btnGhost} onClick={() => { setFormError(''); setDest('root'); setDialog({ kind: 'move', entries: selectedEntries }); }}><FolderInput size={14} className="mr-1 inline" aria-hidden />Move to…</button>
+            <button className={btnGhost} onClick={() => { setFormError(''); setDest('root'); setDialog({ kind: 'copy', entries: selectedEntries }); }}><Copy size={14} className="mr-1 inline" aria-hidden />Copy to…</button>
             <button className={btnDanger} onClick={() => { setFormError(''); setDialog({ kind: 'delete', entries: selectedEntries }); }}>Move to trash</button>
           </div>
         </div>
@@ -183,10 +215,13 @@ export function Files() {
                   <td className="hidden p-3 text-muted md:table-cell">{new Date(e.item.createdAt).toLocaleDateString()}</td>
                   <td className="p-3">
                     <div className="flex justify-end gap-1">
+                      {e.kind === 'file' && /\.(zip|7z|rar|cbz|cbr)$/i.test(e.item.name) && <Link to={`/archive/${e.item.id}`} aria-label={`Browse inside ${e.item.name}`} title="Browse inside" className="rounded p-1.5 text-muted hover:bg-line/60"><PackageOpen size={16} /></Link>}
                       {e.kind === 'file' && <a href={`/api/v1/files/${e.item.id}/content`} download aria-label={`Download ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60"><Download size={16} /></a>}
                       {e.kind === 'file' && <button aria-label={`Share ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setShareFile({ item: e.item, kind: 'file' })}><Link2 size={16} /></button>}
                       {e.kind === 'folder' && <button aria-label={`Share folder ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setShareFile({ item: e.item, kind: 'folder' })}><Link2 size={16} /></button>}
                       {e.kind === 'file' && <button aria-label={`Send ${e.item.name} to Telegram`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setTelegramFiles([e.item])}><Send size={16} /></button>}
+                      <button aria-label={`Copy ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setFormError(''); setDest('root'); setDialog({ kind: 'copy', entries: [e] }); }}><Copy size={16} /></button>
+                      <button aria-label={`Move ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setFormError(''); setDest('root'); setDialog({ kind: 'move', entries: [e] }); }}><FolderInput size={16} /></button>
                       <button aria-label={`Rename ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setName(e.item.name); setFormError(''); setDialog({ kind: 'rename', entry: e }); }}><Pencil size={16} /></button>
                       <button aria-label={`Move ${e.item.name} to trash`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setFormError(''); setDialog({ kind: 'delete', entries: [e] }); }}><Trash2 size={16} /></button>
                     </div>
@@ -228,6 +263,19 @@ export function Files() {
           <div className="mt-4 flex justify-end gap-2"><button type="button" className={btnGhost} onClick={() => setDialog(null)}>Cancel</button>
             <button type="submit" className={btnPrimary} disabled={mutate.isPending || !name.trim()}>Save</button></div>
         </form>
+      </Dialog>
+
+      <Dialog open={dialog?.kind === 'move' || dialog?.kind === 'copy'} title={dialog?.kind === 'copy' ? 'Copy to…' : 'Move to…'} onClose={() => setDialog(null)}>
+        <label className="mb-1 block text-sm" htmlFor="dest-select">
+          {dialog?.kind === 'move' || dialog?.kind === 'copy' ? (dialog.entries.length === 1 ? `“${dialog.entries[0]!.item.name}”` : `${dialog.entries.length} items`) : ''} → destination folder</label>
+        <select id="dest-select" value={dest} onChange={(e) => setDest(e.target.value)} className="w-full rounded-md border border-line bg-bg px-3 py-2 text-sm">
+          <option value="root">My Files (top level)</option>
+          {destinations.map((d) => <option key={d.id} value={d.id}>{d.path}</option>)}
+        </select>
+        {dialog?.kind === 'copy' && <p className="mt-2 text-xs text-muted">Copies use extra storage. If a name is taken, the copy gets a number.</p>}
+        {formError && <p role="alert" className="mt-2 text-sm text-danger">{formError}</p>}
+        <div className="mt-4 flex justify-end gap-2"><button className={btnGhost} onClick={() => setDialog(null)}>Cancel</button>
+          <button className={btnPrimary} disabled={mutate.isPending} onClick={confirmTransfer}>{dialog?.kind === 'copy' ? 'Copy here' : 'Move here'}</button></div>
       </Dialog>
 
       <Dialog open={dialog?.kind === 'delete'} title="Move to trash?" onClose={() => setDialog(null)}>

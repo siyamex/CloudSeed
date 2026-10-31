@@ -244,10 +244,19 @@ export function Player() {
                 onChange={(e) => { const at = ref.current?.audioTracks; if (at) for (let i = 0; i < at.length; i++) at[i]!.enabled = i === Number(e.target.value); }} className="rounded-md border border-line bg-bg px-1.5 py-1 disabled:opacity-60">
                 {d.audioTracks.map((a, i) => <option key={a.index} value={i}>{a.title ?? a.language ?? `Track ${i + 1}`}{a.channels ? ` · ${a.channels}ch` : ''}</option>)}</select></label>
           )}
-          {d.renditions.some((r) => r.status === 'ready') && (
-            <label className="flex items-center gap-1">Version
-              <select value={source} onChange={(e) => { pendingSeek.current = latest.current.pos; setSource(e.target.value); setPlayError(false); }} className="rounded-md border border-line bg-bg px-1.5 py-1">
-                <option value="original">Original</option>{d.renditions.filter((r) => r.status === 'ready').map((r) => <option key={r.profile} value={r.profile}>Converted ({r.profile})</option>)}</select></label>
+          {(d.renditions.some((r) => r.status === 'ready') || (isVideo && d.transcoding.enabled)) && (
+            <label className="flex items-center gap-1">Quality
+              <select value={source} onChange={(e) => {
+                  const v = e.target.value;
+                  if (v.startsWith('create:')) { convert.mutate(v.slice(7)); return; } // not made yet: start the conversion, keep playing
+                  pendingSeek.current = latest.current.pos; setSource(v); setPlayError(false);
+                }} className="rounded-md border border-line bg-bg px-1.5 py-1">
+                <option value="original">Original{d.kind === 'video' && d.width ? ` (${d.height}p)` : ''}</option>
+                {d.renditions.filter((r) => r.status === 'ready').map((r) => <option key={r.profile} value={r.profile}>{r.profile.replace(/^web-/, '')} (converted)</option>)}
+                {isVideo && d.transcoding.enabled && d.transcoding.profiles
+                  .filter((p) => !d.renditions.some((r) => r.profile === p.name && (r.status === 'ready' || r.status === 'queued' || r.status === 'processing')))
+                  .map((p) => <option key={p.name} value={`create:${p.name}`}>{p.name.replace(/^web-/, '')} — create…</option>)}
+              </select></label>
           )}
           <span className="ml-auto flex gap-2">
             {isVideo && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled && <button className={btnGhost} onClick={() => void togglePip()} aria-pressed={pip}><PictureInPicture2 size={14} className="mr-1 inline" aria-hidden />Pop out</button>}

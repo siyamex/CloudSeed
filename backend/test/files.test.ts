@@ -84,7 +84,7 @@ describe('upload and download', () => {
     expect((await upload(c, 'a.bin', Buffer.alloc(500 * 1024))).statusCode).toBe(201);
     expect((await upload(c, 'b.bin', Buffer.alloc(500 * 1024))).statusCode).toBe(201);
     const over = await upload(c, 'c.bin', Buffer.alloc(100 * 1024));
-    expect(over.statusCode).toBe(413);
+    expect(over.statusCode, over.body).toBe(413);
     expect(over.json().error.code).toBe('quota_exceeded');
     expect(await used(c)).toBe(1000 * 1024);
   });
@@ -241,6 +241,64 @@ describe('authorization isolation (IDOR)', () => {
     const root = (await list(g)).json();
     expect(root.files).toHaveLength(0);
     expect(root.folders).toHaveLength(0);
+  });
+});
+
+describe('copy', () => {
+  const copy = (s: Session, payload: Record<string, unknown>) => t.app.inject({ method: 'POST', url: '/api/v1/files/copy', headers: authed(s), payload });
+
+  it('copies files and whole folders as independent objects, renaming clashes and charging the quota', async () => {
+    const s = await login(t, 'f-cora', 'cora@example.com');
+    const a = (await upload(s, 'a.txt', 'hello')).json();
+    const d = await mkdir(s, 'docs');
+    const sub = (await t.app.inject({ method: 'POST', url: '/api/v1/folders', headers: authed(s), payload: { name: 'inner', parentId: d.id } })).json();
+    await upload(s, 'b.txt', 'bb', `?folder=${d.id}`);
+    await upload(s, 'c.txt', 'ccc', `?folder=${sub.id}`);
+    const before = await used(s);
+    const target = await mkdir(s, 'target');
+
+    const r = await copy(s, { fileIds: [a.id], folderIds: [d.id], targetFolderId: target.id });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ copiedFiles: 3, copiedFolders: 2 });
+    expect(await used(s)).toBe(before + 5 + 2 + 3);
+
+    const inTarget = (await list(s, `?folder=${target.id}`)).json();
+    expect(inTarget.files.map((f: { name: string }) => f.name)).toEqual(['a.txt']);
+    expect(inTarget.folders.map((f: { name: string }) => f.name)).toEqual(['docs']);
+    const copiedDocs = (await list(s, `?folder=${inTarget.folders[0].id}`)).json();
+    expect(copiedDocs.files.map((f: { name: string }) => f.name)).toEqual(['b.txt']);
+    expect(copiedDocs.folders.map((f: { name: string }) => f.name)).toEqual(['inner']);
+    // the copy has its own bytes; the original is untouched
+    const copyOfA = inTarget.files[0];
+    expect(copyOfA.id).not.toBe(a.id);
+    expect((await t.app.inject({ method: 'GET', url: `/api/v1/files/${copyOfA.id}/content`, headers: { cookie: s.cookie } })).body).toBe('hello');
+    await t.app.inject({ method: 'DELETE', url: `/api/v1/files/${copyOfA.id}`, headers: authed(s) });
+    expect((await t.app.inject({ method: 'GET', url: `/api/v1/files/${a.id}/content`, headers: { cookie: s.cookie } })).body).toBe('hello');
+
+    // copying into the same folder numbers the name
+    const again = await copy(s, { fileIds: [a.id], targetFolderId: null });
+    expect(again.json().copiedFiles).toBe(1);
+    const root = (await list(s)).json();
+    expect(root.files.map((f: { name: string }) => f.name)).toEqual(expect.arrayContaining(['a.txt', 'a (1).txt']));
+  });
+
+  it('refuses a folder into itself, someone else\'s items, and a copy that would not fit', async () => {
+    const s = await login(t, 'f-cade', 'cade@example.com');
+    const o = await login(t, 'f-cody', 'cody@example.com');
+    const d = await mkdir(s, 'loop');
+    const inner = (await t.app.inject({ method: 'POST', url: '/api/v1/folders', headers: authed(s), payload: { name: 'in', parentId: d.id } })).json();
+    expect((await copy(s, { folderIds: [d.id], targetFolderId: inner.id })).statusCode).toBe(400);
+    const theirs = (await upload(o, 't.txt', 'theirs')).json();
+    const r = await copy(s, { fileIds: [theirs.id], targetFolderId: null });
+    expect(r.json()).toEqual({ copiedFiles: 0, copiedFolders: 0 });
+    expect((await copy(s, { fileIds: [], targetFolderId: (await mkdir(o, 'x')).id })).statusCode).toBe(404);
+    // quota: 1 MiB; 800 KiB cannot be copied into 200 KiB of free space
+    const big1 = (await upload(s, 'big1.bin', Buffer.alloc(400 * 1024))).json(); const big2 = (await upload(s, 'big2.bin', Buffer.alloc(400 * 1024))).json();
+    const before = await used(s);
+    const over = await copy(s, { fileIds: [big1.id, big2.id], targetFolderId: d.id });
+    expect(over.statusCode, over.body).toBe(413);
+    expect(over.json().error.code).toBe('quota_exceeded');
+    expect(await used(s)).toBe(before);
   });
 });
 

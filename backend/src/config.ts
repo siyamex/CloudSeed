@@ -158,6 +158,13 @@ const schema = z.object({
   /** FFmpeg/ffprobe binaries (the Docker image installs FFmpeg; on a dev machine they must be on PATH or set here). */
   FFMPEG_PATH: z.string().default('ffmpeg'),
   FFPROBE_PATH: z.string().default('ffprobe'),
+  /** 7-Zip, for looking inside .7z and .rar files (the Docker image installs it; ZIP files need nothing). */
+  SEVENZIP_PATH: z.string().default('7zz'),
+  /** Browsing an archive lists at most this many entries. */
+  ARCHIVE_MAX_ENTRIES: z.coerce.number().int().positive().default(20_000),
+  /** Extracting an archive into your files: at most this many files and this many bytes in one go (a guard against zip bombs). */
+  ARCHIVE_EXTRACT_MAX_FILES: z.coerce.number().int().positive().default(5_000),
+  ARCHIVE_EXTRACT_MAX_BYTES: z.coerce.number().int().positive().default(8 * 1024 ** 3),
   MEDIA_ENABLED: bool.default(true),
   MEDIA_WORKDIR: z.string().default('./data/media'),
   /** Media files are probed and thumbnailed by the worker, this many at a time. */

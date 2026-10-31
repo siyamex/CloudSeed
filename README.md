@@ -25,6 +25,10 @@ All six milestones are implemented, apart from the gaps listed below. **Only wha
 | **Backups**: encrypted, snapshot-consistent; scheduled by the worker with retention and read-back verification; admin page and alerts; restore, restore test, reconcile, storage migration (command line) | Copying backups off the machine (you do that), restoring from the web UI |
 | **Installable app (PWA)**: manifest, icons, offline-capable app shell | |
 | **Media seek-bar previews**: picture previews while you hover or drag the timeline | |
+| **Liquid-glass look**: frosted translucent panels over a soft colour backdrop, light and dark, with solid fallbacks for reduced-transparency and high-contrast settings | |
+| **Copy and move** files and folders (quota-checked, name clashes numbered); **quality picker** in the player (original, converted copies, or create one on the spot) | |
+| **Browse ZIP, 7Z and RAR** archives without unpacking (ZIP: ranged reads of the contents list; 7Z/RAR: through 7-Zip), download single entries, extract all or a selection into a folder with zip-bomb guards | RAR could not be tested here (no RAR files can be created without the proprietary tool); password-protected archives are listed but not opened |
+| **TV mode** (`/tv`): big remote-friendly tiles, D-pad navigation, resume, opened automatically by common smart-TV browsers | Not tested on a real TV (see below) |
 
 ## Quick start (Docker)
 
@@ -107,6 +111,18 @@ Not supported by design: scraping pages, DRM circumvention, or sources needing c
 ### Tuning for a small VPS (1–2 GB RAM)
 
 `DOWNLOAD_GLOBAL_CONCURRENCY=2`, `DOWNLOAD_USER_CONCURRENCY=1`, `WORKER_CONCURRENCY=2`, `DB_POOL_MAX=5`, and set `DOWNLOAD_BANDWIDTH_LIMIT_BPS` if downloads starve other traffic. Disk is the real limit: partial files live in the `downloads` volume and a finished file is briefly present in both the workspace and storage. Keep free space of at least your largest allowed file (`MAX_FILE_SIZE_BYTES`) times the global concurrency.
+
+## Archives (ZIP, 7Z, RAR)
+
+In **My Files**, the box icon next to a `.zip`, `.7z` or `.rar` file opens it like a folder. Nothing is unpacked to look: a ZIP's contents list is read with a few ranged reads of the stored file; 7Z and RAR are read by 7-Zip (`7zz`, installed in the Docker image; elsewhere install it or set `SEVENZIP_PATH`). You can download one entry, or **Extract all / selected** into a new folder next to the archive.
+
+Archives are hostile input, so extraction is guarded: entry names with `..`, absolute paths or control characters and links are skipped; the declared total must fit your free space and `ARCHIVE_EXTRACT_MAX_BYTES` (default 8 GiB) and `ARCHIVE_EXTRACT_MAX_FILES` (default 5000); the real size of every entry is counted while it is written, so an entry that lies about its size is stopped; and any failure removes everything the extraction created. Password-protected entries are shown but skipped. 7Z/RAR entries are unpacked one by one, which is slow for very large *solid* archives.
+
+Honest limits: the ZIP and 7Z paths are covered by automated tests. **RAR is not**: RAR files cannot be created without WinRAR, so only the "not a valid RAR" and "7-Zip missing" cases are tested; real RAR files go through the same 7-Zip code as 7Z.
+
+## TV mode
+
+Open `/tv` (sidebar: **TV mode**) on any large screen. Browsers whose name identifies a smart TV (Tizen, webOS, Android TV, Fire TV, Roku, VIDAA, BRAVIA, HbbTV and similar) go there by themselves on the first page; "Normal view" switches back for the visit. It shows your videos and music as large tiles, moves with the arrow keys / remote D-pad, plays with OK, and returns with Back. It uses the browser's own player, so what plays is whatever that TV's browser can decode; for other files create a converted copy (MP4/AAC) from a computer or phone first. **Not tested on a real TV**: it was checked in a desktop browser with the keyboard only. Remote Back-key codes for Samsung and LG are handled but unverified.
 
 ## Torrents
 
