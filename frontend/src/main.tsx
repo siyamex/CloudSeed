@@ -12,6 +12,11 @@ const queryClient = new QueryClient({
   },
 });
 
+// Installable app: the service worker only caches the app shell (see public/sw.js). Not registered during development.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => undefined); });
+}
+
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
