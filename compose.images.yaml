@@ -1,0 +1,11 @@
+# Run the published images instead of building from source (no build tools needed on the server):
+#   docker compose -f compose.yaml -f compose.prod.yaml -f compose.images.yaml pull
+#   docker compose -f compose.yaml -f compose.prod.yaml -f compose.images.yaml up -d
+# Pin CLOUDSEED_TAG to a release such as 1.0.0 in production; "latest" follows the main branch.
+x-api: &api { image: "siyamexcom/cloudseed-api:${CLOUDSEED_TAG:-latest}", pull_policy: always }
+services:
+  migrate: { <<: *api }
+  api: { <<: *api }
+  worker: { <<: *api }
+  cli: { <<: *api }
+  frontend: { image: "siyamexcom/cloudseed-web:${CLOUDSEED_TAG:-latest}", pull_policy: always }

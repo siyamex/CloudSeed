@@ -261,6 +261,16 @@ Schedule it with cron / systemd timers (`0 3 * * * ... backup ...`) and **copy t
 >
 > `pg_dump -Fc` plus a copy of the storage volume remains a valid alternative for operators who prefer standard tools. It is not consistent unless the app is stopped, it was not tested here, and it will contain the encrypted bot tokens (see `ENCRYPTION_KEY` above).
 
+## Published images
+
+Images are published to Docker Hub by the *Publish images* workflow: `siyamexcom/cloudseed-api` (API, worker and CLI) and `siyamexcom/cloudseed-web` (the UI), for amd64 and arm64. Each is scanned with Trivy before it is pushed. Every push to `main` updates `:latest`; a tag like `v1.0.0` publishes `:1.0.0`, `:1.0` and `:latest`.
+
+```bash
+CLOUDSEED_TAG=1.0.0 docker compose -f compose.yaml -f compose.prod.yaml -f compose.images.yaml up -d
+```
+
+The repository needs two secrets before the first run: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with Read & Write permission). The workflow fails with a clear message if they are missing. **Not yet run**: the arm64 build and the first push have not been tried.
+
 ## Production
 
 ```bash

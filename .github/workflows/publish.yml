@@ -1,0 +1,80 @@
+name: Publish images
+# Builds the two images, scans them, and publishes them to Docker Hub as siyamexcom/cloudseed-api and siyamexcom/cloudseed-web.
+#   - every push to main      -> :latest and :sha-<commit>
+#   - a tag such as v1.2.3    -> :1.2.3, :1.2 and :latest
+# Needs two repository secrets (Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USERNAME   your Docker Hub user name
+#   DOCKERHUB_TOKEN      an access token with Read & Write permission (create it at hub.docker.com > Account settings > Personal access tokens)
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  NAMESPACE: siyamexcom
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: cloudseed-api, dockerfile: docker/backend.Dockerfile }
+          - { name: cloudseed-web, dockerfile: docker/frontend.Dockerfile }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Docker Hub credentials are configured
+        env:
+          U: ${{ secrets.DOCKERHUB_USERNAME }}
+          T: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$U" ] || [ -z "$T" ]; then
+            echo "::error::Add the repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (see the comment at the top of this workflow)."
+            exit 1
+          fi
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.NAMESPACE }}/${{ matrix.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      # Build once for the runner's architecture, scan it, and only then publish.
+      - name: Build for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: scan-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with: { image-ref: 'scan-${{ matrix.name }}:ci', severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1' }
+      - name: Build and push (amd64 and arm64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
