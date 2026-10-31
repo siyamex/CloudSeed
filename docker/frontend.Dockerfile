@@ -8,7 +8,7 @@ RUN npm ci --workspace frontend --include-workspace-root
 COPY frontend frontend
 RUN npm -w frontend run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/frontend/dist /usr/share/nginx/html
 EXPOSE 8081

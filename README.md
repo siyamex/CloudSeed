@@ -270,7 +270,7 @@ docker compose -f compose.yaml -f compose.prod.yaml up --build -d
 - The API validates its configuration on boot and fails with a list of problems (short `SESSION_SECRET`, missing Google credentials, non-https URL, default DB password).
 - The frontend binds to `127.0.0.1`; put a TLS reverse proxy (Caddy/Traefik/nginx) in front and forward `X-Forwarded-Proto`.
 - Containers run as non-root, read-only, with capabilities dropped.
-- Pin image tags/digests before deploying (`postgres:17-alpine`, `node:24-alpine`, `nginx-unprivileged:1.27-alpine` are version-tagged, not digest-pinned).
+- Pin image tags/digests before deploying (`postgres:17-alpine`, `node:24-alpine`, `nginx-unprivileged:1.31-alpine` are version-tagged, not digest-pinned).
 
 ## Upgrading
 
