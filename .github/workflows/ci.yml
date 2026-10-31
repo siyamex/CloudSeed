@@ -1,0 +1,44 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:pg -w backend
+      - run: npm -w frontend run build
+      - run: npm -w backend run build
+      # API + worker as separate processes on real PostgreSQL; also exercises sharing, admin, metrics and the backup/restore CLI
+      - run: npm run smoke
+      - run: npm audit --omit=dev --audit-level=high
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f docker/backend.Dockerfile -t cloudseed-api .
+      - run: docker build -f docker/frontend.Dockerfile -t cloudseed-web .
+      # The compose files must at least be valid, in development and production form.
+      - run: cp .env.example .env && POSTGRES_PASSWORD=ci-only docker compose config -q
+      - run: cp .env.example .env && POSTGRES_PASSWORD=ci-only docker compose -f compose.yaml -f compose.prod.yaml --profile tools config -q
+      # The image must contain the maintenance CLI and FFmpeg.
+      - run: docker run --rm --entrypoint node cloudseed-api dist/cli.js help
+      - run: docker run --rm --entrypoint ffmpeg cloudseed-api -version
+      # Known vulnerabilities in the finished images (OS packages and Node dependencies). Fails on fixable HIGH/CRITICAL findings.
+      - uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: cloudseed-api, severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1' }
+      - uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: cloudseed-web, severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1' }
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with: { fail-on-severity: high }

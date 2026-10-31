@@ -1,0 +1,18 @@
+{
+  "name": "cloudseed",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm -w backend run dev",
+    "build": "npm -w backend run build && npm -w frontend run build",
+    "test": "npm -w backend test",
+    "typecheck": "npm -w backend run typecheck",
+    "dev:worker": "npm -w backend run dev:worker",
+    "smoke": "tsx scripts/smoke.mts",
+    "ui-stack": "tsx scripts/ui-stack.mts"
+  }
+}

@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+}
+
+:root {
+  --bg: #f8f9fb; --surface: #ffffff; --line: #e4e7ec; --fg: #101828; --muted: #667085;
+  --accent: #4f46e5; --accent-fg: #ffffff; --danger: #d92d20;
+}
+.dark {
+  --bg: #0c0e12; --surface: #14171d; --line: #262b34; --fg: #eceff4; --muted: #8b93a1;
+  --accent: #818cf8; --accent-fg: #0c0e12; --danger: #f97066;
+}
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

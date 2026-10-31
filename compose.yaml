@@ -1,0 +1,106 @@
+# Local development / single-host evaluation:  docker compose up --build -d
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cloudseed}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudseed}
+      POSTGRES_DB: ${POSTGRES_DB:-cloudseed}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: { context: ., dockerfile: docker/backend.Dockerfile }
+    command: ["node", "dist/db/migrate-cli.js"]
+    env_file: [.env]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:-cloudseed}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: docker/backend.Dockerfile }
+    env_file: [.env]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:-cloudseed}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    volumes: [storage:/data]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # Background download worker. Scale with `docker compose up -d --scale worker=2`; concurrency limits are
+  # enforced across all workers through the database.
+  worker:
+    build: { context: ., dockerfile: docker/backend.Dockerfile }
+    command: ["node", "dist/worker.js"]
+    env_file: [.env]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:-cloudseed}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    volumes: [storage:/data, downloads:/downloads]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/worker-alive -mmin -1 | grep -q ."]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # OPTIONAL and off by default: your own Telegram Bot API server, which raises the upload limit from 50 MB to 2000 MB.
+  # Enable with:  docker compose --profile telegram-local up -d
+  # then set TELEGRAM_API_MODE=self-hosted and TELEGRAM_API_BASE=http://telegram-api:8081 in .env.
+  # Needs TELEGRAM_API_ID / TELEGRAM_API_HASH from https://my.telegram.org. Pin the image to a tested tag before production.
+  telegram-api:
+    image: aiogram/telegram-bot-api:latest
+    profiles: ["telegram-local"]
+    environment:
+      # Not "required" here on purpose: Compose substitutes variables in every service, even ones in a disabled profile,
+      # so a required variable would break `docker compose up` for everyone who does not use this profile.
+      # If you enable the profile without setting them, the telegram-api container fails to start and says why in its log.
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+    volumes: [telegram-api-data:/var/lib/telegram-bot-api]
+    restart: unless-stopped
+
+  # One-off maintenance commands (backup, verify, restore, reconcile, migrate-storage). Not started by `up`.
+  #   docker compose --profile tools run --rm cli backup --out /backups/cloudseed.csbk
+  # Pass the passphrase for this one command only:  BACKUP_PASSPHRASE='...' docker compose --profile tools run --rm -e BACKUP_PASSPHRASE cli ...
+  cli:
+    profiles: ["tools"]
+    build: { context: ., dockerfile: docker/backend.Dockerfile }
+    entrypoint: ["node", "dist/cli.js"]
+    env_file: [.env]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:-cloudseed}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    volumes: [storage:/data, backups:/backups]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  frontend:
+    build: { context: ., dockerfile: docker/frontend.Dockerfile }
+    ports: ["${HTTP_PORT:-8080}:8081"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  backups:
+  storage:
+  downloads:
+  telegram-api-data:

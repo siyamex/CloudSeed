@@ -1,0 +1,49 @@
+# Production overlay:  docker compose -f compose.yaml -f compose.prod.yaml up -d
+# Requires real secrets in .env (the API refuses to start with missing/insecure values).
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  migrate:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloudseed}
+
+  api:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy: { resources: { limits: { memory: 1g, cpus: "2" } } }
+
+  worker:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy: { resources: { limits: { memory: 1g, cpus: "2" } } }
+
+  cli:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cloudseed}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  frontend:
+    # Bind to loopback only: put a TLS-terminating reverse proxy (Caddy, Traefik, nginx) in front.
+    ports: !override ["127.0.0.1:${HTTP_PORT:-8080}:8081"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
