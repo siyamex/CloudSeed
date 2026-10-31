@@ -12,6 +12,9 @@ FROM node:24-alpine
 ENV NODE_ENV=production MIGRATIONS_DIR=/app/migrations LOCAL_STORAGE_ROOT=/data/storage LOCAL_TMP_DIR=/data/tmp DOWNLOAD_WORKDIR=/downloads MEDIA_WORKDIR=/downloads/media
 # FFmpeg (and ffprobe) index media and make thumbnails; only the worker runs them.
 RUN apk add --no-cache ffmpeg
+# The app only ever runs `node dist/...`. The package managers that ship in the base image (npm bundles its own copies of undici,
+# tar, etc.) are never used at runtime, so remove them: fewer vulnerable packages and less for an attacker to use.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 WORKDIR /app
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/backend/package.json backend/package.json
