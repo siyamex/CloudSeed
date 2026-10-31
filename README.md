@@ -316,7 +316,7 @@ The media tests generate real audio/video with FFmpeg at test time (the `@ffmpeg
 
 One test (the backup *snapshot consistency* check) needs a second database connection while the backup transaction is open, so it is skipped on PGlite (single connection) and runs only under `npm run test:pg`.
 
-Still not covered: Docker/Compose itself (the CI job that builds the images, validates the compose files and scans the images with Trivy has never run, and its action versions were written from memory), the real Telegram servers (only a faithful fake: nothing has been sent to real Telegram), the browser UI (no browser end-to-end tests yet), and Google's real servers (the OIDC flow is tested against a fake IdP with real signatures).
+Still not covered: Docker/Compose itself (the CI job that builds the images, validates the compose files and scans the images with Trivy has never run, and the Trivy action version was corrected after its first run failed to resolve), the real Telegram servers (only a faithful fake: nothing has been sent to real Telegram), the browser UI (no browser end-to-end tests yet), and Google's real servers (the OIDC flow is tested against a fake IdP with real signatures).
 
 ## Security notes
 
