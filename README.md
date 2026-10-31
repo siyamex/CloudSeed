@@ -271,6 +271,20 @@ CLOUDSEED_TAG=1.0.0 docker compose -f compose.yaml -f compose.prod.yaml -f compo
 
 The repository needs two secrets before the first run: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with Read & Write permission). The workflow fails with a clear message if they are missing. **Not yet run**: the arm64 build and the first push have not been tried.
 
+## CasaOS (and other home servers)
+
+CasaOS runs Docker Compose files, so CloudSeed installs from the published images with no build step. `casaos/docker-compose.yml` is a ready-made, self-contained file (PostgreSQL, migrations, API, worker, web UI).
+
+1. **You need an https address.** Google sign-in refuses plain `http://192.168.x.x` addresses, and the app refuses to start in production mode without https. Use a domain you control with a Cloudflare Tunnel, Tailscale Funnel/Serve with a certificate, or Nginx Proxy Manager (also in the CasaOS app store) pointing at CasaOS port **8089**. Forward `X-Forwarded-Proto: https`.
+2. **Create Google credentials** (see *Google sign-in setup*). The redirect URI is `https://your-domain/api/v1/auth/google/callback`.
+3. **Generate two secrets** on any machine: `openssl rand -base64 48` (SESSION_SECRET) and `openssl rand -base64 32` (ENCRYPTION_KEY). Save a copy of the second one somewhere safe.
+4. In CasaOS choose **App Store > Custom Install (top right) > Import**, paste `casaos/docker-compose.yml`, and replace every `CHANGE-ME` (domain, Google ID and secret, your email in `ADMIN_EMAILS`, the two secrets, the database password, which appears twice and must match). Install.
+5. Open your https address and sign in with the Google account listed in `ADMIN_EMAILS`: that account becomes the administrator.
+
+Data lives under `/DATA/AppData/cloudseed/` (`pgdata`, `storage`, `downloads`). Back up with the CLI: `docker exec -e BACKUP_PASSPHRASE='...' cloudseed-api node dist/cli.js backup --out /data/backup.csbk`, then copy the file off the machine. To update, pull the new image in CasaOS (or `docker compose pull && up -d`); migrations run automatically.
+
+> **Not tested on CasaOS.** The file is valid Compose, but I have not installed it on a CasaOS machine. CasaOS's import screen can be picky about extensions; if it rejects `x-casaos`, delete that block at the bottom (the app then installs without the icon and title).
+
 ## Production
 
 ```bash

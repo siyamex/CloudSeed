@@ -1,0 +1,98 @@
+# CloudSeed for CasaOS.  CasaOS > App Store > "+ Custom Install" (top right) > import / paste this file.
+# BEFORE you press Install, replace every value marked CHANGE-ME below (see "Configure" in the README, section CasaOS).
+name: cloudseed
+
+x-env: &env
+  NODE_ENV: production
+  # The exact https address people will open, WITHOUT a trailing slash. Google sign-in does not work with a plain IP address.
+  PUBLIC_URL: https://CHANGE-ME.example.com
+  GOOGLE_CLIENT_ID: CHANGE-ME.apps.googleusercontent.com
+  GOOGLE_CLIENT_SECRET: CHANGE-ME
+  GOOGLE_REDIRECT_URI: https://CHANGE-ME.example.com/api/v1/auth/google/callback
+  ADMIN_EMAILS: CHANGE-ME@gmail.com
+  # Generate with:  openssl rand -base64 48   (any 32+ characters)
+  SESSION_SECRET: CHANGE-ME-to-a-long-random-string-of-48-characters-or-more
+  # Generate with:  openssl rand -base64 32   (must decode to exactly 32 bytes). Keep a copy: backups cannot be restored without it.
+  ENCRYPTION_KEY: CHANGE-ME-base64-of-32-random-bytes=
+  DATABASE_URL: postgres://cloudseed:CHANGE-ME-DB-PASSWORD@postgres:5432/cloudseed
+  LOCAL_STORAGE_ROOT: /data/storage
+  LOCAL_TMP_DIR: /data/tmp
+  DOWNLOAD_WORKDIR: /downloads
+  MEDIA_WORKDIR: /downloads/media
+  MIGRATIONS_DIR: /app/migrations
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cloudseed-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudseed
+      POSTGRES_PASSWORD: CHANGE-ME-DB-PASSWORD   # must match the password inside DATABASE_URL above
+      POSTGRES_DB: cloudseed
+    volumes:
+      - /DATA/AppData/$AppID/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudseed -d cloudseed"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: siyamexcom/cloudseed-api:latest
+    container_name: cloudseed-migrate
+    command: ["node", "dist/db/migrate-cli.js"]
+    environment: *env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: siyamexcom/cloudseed-api:latest
+    container_name: cloudseed-api
+    restart: unless-stopped
+    environment: *env
+    volumes:
+      - /DATA/AppData/$AppID/storage:/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    stop_grace_period: 30s
+
+  worker:
+    image: siyamexcom/cloudseed-api:latest
+    container_name: cloudseed-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment: *env
+    volumes:
+      - /DATA/AppData/$AppID/storage:/data
+      - /DATA/AppData/$AppID/downloads:/downloads
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    stop_grace_period: 30s
+
+  frontend:
+    image: siyamexcom/cloudseed-web:latest
+    container_name: cloudseed-web
+    restart: unless-stopped
+    ports:
+      - "8089:8081"      # open http://<casaos-ip>:8089 on your network; put your https reverse proxy / tunnel in front of this port
+    depends_on:
+      api: { condition: service_healthy }
+
+x-casaos:
+  architectures: [amd64, arm64]
+  main: frontend
+  author: siyamex
+  category: Cloud
+  description:
+    en_us: Self-hosted cloud file manager with Google sign-in, a remote download engine, Telegram delivery, media streaming and secure sharing.
+  tagline:
+    en_us: Your own cloud for files, downloads and media
+  title:
+    en_us: CloudSeed
+  index: /
+  port_map: "8089"
+  icon: https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Nextcloud/icon.png
