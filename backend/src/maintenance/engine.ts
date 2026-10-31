@@ -5,6 +5,8 @@ import type { Db } from '../db/index.js';
 import type { Mailer } from '../mail/mailer.js';
 import { BackupScheduler } from '../backup/scheduler.js';
 import type { StorageAdapter } from '../storage/types.js';
+import type { Vault } from '../crypto.js';
+import { sendToDestination } from '../telegram/notify.js';
 
 export interface Logger {
   info(o: object, msg?: string): void;
@@ -23,6 +25,8 @@ export interface MaintenanceOptions {
   aliveFile?: string;
   /** Needed for backups of stored files. Without it the engine does no backups. */
   adapterFor?: (kind: string) => StorageAdapter | undefined;
+  /** Needed to send notifications through users' Telegram bots. Without it Telegram notifications are not sent. */
+  vault?: Vault;
 }
 
 const SWEEP_EVERY_MS = 5 * 60_000;
@@ -72,6 +76,7 @@ export class MaintenanceEngine {
       if (now - this.lastBeat > 10_000) { this.lastBeat = now; await this.heartbeat().catch((err) => this.o.log.warn({ err }, 'heartbeat failed')); }
       if (this.backups && now - this.lastBackupCheck > 5_000) { this.lastBackupCheck = now; this.backups.tick(); } // runs in the background: a backup can take minutes
       await this.sendEmails().catch((err) => this.o.log.error({ err }, 'email sweep failed'));
+      await this.sendTelegram().catch((err) => this.o.log.error({ err }, 'telegram notification sweep failed'));
       if (now - this.lastSweep > SWEEP_EVERY_MS) {
         this.lastSweep = now;
         await this.sweep().catch((err) => this.o.log.error({ err }, 'maintenance sweep failed'));
@@ -131,6 +136,48 @@ export class MaintenanceEngine {
           `UPDATE notifications SET email_attempts = $2, email_state = $3, email_next_at = now() + make_interval(secs => $4) WHERE id = $1`,
           [n.id, attempts, attempts >= 3 ? 'failed' : null, 60 * 2 ** attempts]);
       }
+    }
+    return sent;
+  }
+
+  // ---------------------------------------------------------------- Telegram
+  /**
+   * Sends notifications to the Telegram destination a user chose, through that user's own bot. Each notification goes out at most
+   * once per success; failures back off and are given up on after three tries. Sends share the destination's pacing slot with file
+   * transfers, so a burst of notifications cannot trip Telegram's flood limit for the chat.
+   */
+  async sendTelegram(): Promise<number> {
+    if (!this.o.vault || !this.cfg.TELEGRAM_ENABLED) return 0;
+    const batch = await this.db.tx(async (t) => {
+      const rows = (await t.query<{ id: string; user_id: string; kind: string; title: string; body: string | null; attempts: number; dest: string | null; muted: string[] | null }>(
+        `SELECT n.id, n.user_id, n.kind, n.title, n.body, n.tg_attempts AS attempts, us.telegram_notify_destination_id AS dest, us.muted_kinds AS muted
+           FROM notifications n JOIN users u ON u.id = n.user_id AND u.status = 'active' LEFT JOIN user_settings us ON us.user_id = n.user_id
+          WHERE n.tg_state IS NULL AND n.tg_next_at <= now() AND n.created_at > now() - interval '2 days'
+          ORDER BY n.created_at LIMIT 10 FOR UPDATE OF n SKIP LOCKED`)).rows;
+      if (rows.length) await t.query(`UPDATE notifications SET tg_next_at = now() + interval '5 minutes' WHERE id = ANY($1::uuid[])`, [rows.map((r) => r.id)]);
+      return rows;
+    });
+    let sent = 0;
+    for (const n of batch) {
+      if (!n.dest || (n.muted ?? []).includes(n.kind)) { await this.db.query(`UPDATE notifications SET tg_state = 'skipped' WHERE id = $1`, [n.id]); continue; }
+      const recent = (await this.db.query<{ c: number }>(`SELECT count(*)::int AS c FROM notifications WHERE user_id = $1 AND tg_state = 'sent' AND created_at > now() - interval '1 hour'`, [n.user_id])).rows[0]!.c;
+      if (recent >= this.cfg.TELEGRAM_NOTIFY_MAX_PER_HOUR) { await this.db.query(`UPDATE notifications SET tg_state = 'skipped' WHERE id = $1`, [n.id]); continue; }
+      // take the destination's next sending slot; if another send holds it, try again in a few seconds (not an attempt)
+      const slot = await this.db.query(
+        `UPDATE telegram_destinations SET next_send_at = now() + make_interval(secs => $2::float8) WHERE id = $1 AND next_send_at <= now()`, [n.dest, this.cfg.TELEGRAM_CHAT_INTERVAL_MS / 1000]);
+      if (!slot.rowCount) { await this.db.query(`UPDATE notifications SET tg_next_at = now() + interval '5 seconds' WHERE id = $1`, [n.id]); continue; }
+
+      const out = await sendToDestination({
+        db: this.db, vault: this.o.vault, config: this.cfg, userId: n.user_id, destinationId: n.dest,
+        text: `${n.title}${n.body ? `\n\n${n.body}` : ''}\n\n${this.cfg.PUBLIC_URL}`,
+      });
+      if (out.ok) { await this.db.query(`UPDATE notifications SET tg_state = 'sent' WHERE id = $1`, [n.id]); sent++; continue; }
+      const attempts = n.attempts + 1;
+      this.o.log.warn({ attempts, retry: out.retry }, 'telegram notification failed'); // never the text, chat or token
+      if (out.retryAfterSeconds) await this.db.query(`UPDATE telegram_destinations SET next_send_at = now() + make_interval(secs => $2::float8) WHERE id = $1`, [n.dest, out.retryAfterSeconds]);
+      await this.db.query(
+        `UPDATE notifications SET tg_attempts = $2, tg_state = $3, tg_next_at = now() + make_interval(secs => $4::float8) WHERE id = $1`,
+        [n.id, attempts, !out.retry || attempts >= 3 ? 'failed' : null, out.retryAfterSeconds ?? 60 * 2 ** attempts]);
     }
     return sent;
   }

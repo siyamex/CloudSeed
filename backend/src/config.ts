@@ -42,6 +42,8 @@ const schema = z.object({
   SMTP_FROM: z.string().default('CloudSeed <noreply@localhost>'),
   /** Upper bound of notification emails per user per hour. */
   EMAIL_MAX_PER_HOUR: z.coerce.number().int().positive().default(20),
+  /** Upper bound of notifications sent to Telegram per user per hour. */
+  TELEGRAM_NOTIFY_MAX_PER_HOUR: z.coerce.number().int().positive().default(30),
   NOTIFICATION_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   /** In-app and email warning once a user has used this percentage of their quota. */
   QUOTA_WARNING_PERCENT: z.coerce.number().int().min(1).max(100).default(90),

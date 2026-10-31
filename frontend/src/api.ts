@@ -151,8 +151,8 @@ export function formatBytes(n: number): string {
 export interface NotificationItem { id: string; kind: string; title: string; body: string | null; read: boolean; createdAt: string }
 export interface AccountSettings {
   theme: 'system' | 'light' | 'dark'; displayName: string | null; defaultDownloadFolderId: string | null;
-  downloadConcurrency: number | null; downloadBandwidthBps: number | null; emailNotifications: boolean; mutedKinds: string[];
-  limits: { downloadConcurrency: number; downloadBandwidthBps: number; emailAvailable: boolean };
+  downloadConcurrency: number | null; downloadBandwidthBps: number | null; emailNotifications: boolean; telegramNotifyDestinationId: string | null; mutedKinds: string[];
+  limits: { downloadConcurrency: number; downloadBandwidthBps: number; emailAvailable: boolean; telegramAvailable: boolean };
 }
 export interface SessionItem { id: string; current: boolean; userAgent: string | null; ip: string | null; createdAt: string; lastSeenAt: string; expiresAt: string }
 

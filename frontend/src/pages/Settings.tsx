@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, LogOut, Monitor, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ApiError, api, formatBytes, type AccountSettings, type Me, type SessionItem } from '../api';
+import { ApiError, api, formatBytes, type AccountSettings, type Me, type SessionItem, type TgDestination } from '../api';
 import { Dialog, btnDanger, btnGhost, btnPrimary } from '../components/Dialog';
 
 const input = 'w-full rounded-md border border-line bg-bg px-3 py-1.5 text-sm';
@@ -28,6 +28,13 @@ export function Settings({ me }: { me: Me['user'] }) {
   const s = useQuery({ queryKey: ['settings'], queryFn: () => api<AccountSettings>('/account/settings') });
   const folders = useQuery({ queryKey: ['folders-all'], queryFn: () => api<{ folders: { id: string; parentId: string | null; name: string }[] }>('/folders') });
   const kinds = useQuery({ queryKey: ['notif-kinds'], queryFn: () => api<{ kinds: { kind: string; label: string }[] }>('/notifications/kinds') });
+  const tgDests = useQuery({ queryKey: ['tg-destinations'], queryFn: () => api<{ destinations: TgDestination[] }>('/telegram/destinations'), enabled: s.data?.limits.telegramAvailable === true });
+  const [tgTest, setTgTest] = useState<string | null>(null);
+  const testTelegram = useMutation({
+    mutationFn: () => api('/account/telegram-notify/test', { method: 'POST', body: {} }),
+    onSuccess: () => setTgTest('A test message was sent. Check the chat.'),
+    onError: (e) => setTgTest(e instanceof ApiError ? e.message : 'The test failed'),
+  });
   const sessions = useQuery({ queryKey: ['sessions'], queryFn: () => api<{ sessions: SessionItem[] }>('/account/sessions') });
 
   const [displayName, setDisplayName] = useState('');
@@ -125,9 +132,28 @@ export function Settings({ me }: { me: Me['user'] }) {
           <span>Also email me at {me.email}
             {!cfg.limits.emailAvailable && <span className="block text-xs text-muted">The administrator has not set up an email server, so this is not available.</span>}</span>
         </label>
+        {cfg.limits.telegramAvailable && (
+          <div className="mt-4 border-t border-line pt-4">
+            <label className="block text-sm">Also post notifications to a Telegram chat
+              <select className={`${input} mt-1`} value={cfg.telegramNotifyDestinationId ?? ''} disabled={save.isPending}
+                onChange={(e) => { setTgTest(null); save.mutate({ telegramNotifyDestinationId: e.target.value || null }); }}>
+                <option value="">Don't use Telegram for notifications</option>
+                {(tgDests.data?.destinations ?? []).filter((d) => d.canSend || d.id === cfg.telegramNotifyDestinationId).map((d) => (
+                  <option key={d.id} value={d.id}>{d.title} (via @{d.botUsername ?? 'bot'}){d.canSend ? '' : ' — cannot post'}</option>
+                ))}
+              </select></label>
+            <p className="mt-1 text-xs text-muted">Titles and details (such as file names) go to that chat, so everyone who can read it will see them. Pick a private chat or channel of your own. Add a bot and a chat on the Telegram page first.</p>
+            {cfg.telegramNotifyDestinationId && (
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button type="button" className={btnGhost} disabled={testTelegram.isPending} onClick={() => { setTgTest(null); testTelegram.mutate(); }}>Send a test message</button>
+                {tgTest && <span role="status" className={`text-xs ${testTelegram.isError ? 'text-danger' : 'text-muted'}`}>{tgTest}</span>}
+              </div>
+            )}
+          </div>
+        )}
         <fieldset className="mt-4">
           <legend className="text-sm font-medium">Tell me about</legend>
-          <p className="text-xs text-muted">Unticked kinds are hidden and never emailed.</p>
+          <p className="text-xs text-muted">Unticked kinds are hidden and never emailed or posted to Telegram.</p>
           <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
             {(kinds.data?.kinds ?? []).map((k) => (
               <label key={k.kind} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!cfg.mutedKinds.includes(k.kind)} disabled={save.isPending} onChange={() => toggleMuted(k.kind)} />{k.label}</label>

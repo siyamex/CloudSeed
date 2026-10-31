@@ -32,7 +32,7 @@ const media = config.MEDIA_ENABLED
   : null;
 media?.start();
 const mailer = createMailer(config);
-const maintenance = new MaintenanceEngine({ db, config, mailer, log, adapterFor, role: 'worker', aliveFile: `${process.env.WORKER_ALIVE_FILE || '/tmp/worker-alive'}-maintenance` });
+const maintenance = new MaintenanceEngine({ db, config, mailer, log, adapterFor, vault: createVault(config), role: 'worker', aliveFile: `${process.env.WORKER_ALIVE_FILE || '/tmp/worker-alive'}-maintenance` });
 maintenance.start();
 log.info({ workerId: engine.workerId, concurrency: config.WORKER_CONCURRENCY }, 'download worker started');
 

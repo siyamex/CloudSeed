@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { adapterFor, cookieName, requireAuth, type Deps } from '../app.js';
 import { HttpError } from '../errors.js';
 import { deleteObjects, type ObjectRef } from '../files/ops.js';
+import { createVault } from '../crypto.js';
 import { isKnownKind } from '../notifications/kinds.js';
+import { sendToDestination } from '../telegram/notify.js';
 
 const uuid = z.string().uuid();
 
@@ -17,6 +19,8 @@ const patchBody = z.object({
   /** bytes per second; null or 0 = no personal limit */
   downloadBandwidthBps: z.number().int().min(0).nullable().optional(),
   emailNotifications: z.boolean().optional(),
+  /** One of the user's own Telegram destinations; null turns Telegram notifications off. */
+  telegramNotifyDestinationId: uuid.nullable().optional(),
   mutedKinds: z.array(z.string()).max(50).optional(),
 }).strict();
 
@@ -25,13 +29,14 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
   const audit = (userId: string | null, action: string, target: string | null, ip?: string, meta: object = {}) =>
     db.query(`INSERT INTO audit_logs (user_id, action, target, ip, metadata) VALUES ($1, $2, $3, $4, $5)`, [userId, action, target, ip ?? null, JSON.stringify(meta)]).catch(() => undefined);
   const emailAvailable = () => config.SMTP_HOST !== '';
+  const vault = deps.vault ?? createVault(config);
 
   async function readSettings(userId: string) {
     const r = await db.query<{
-      theme: string | null; display_name: string | null; folder: string | null; conc: number | null; bps: string | null; email: boolean | null; muted: string[] | null;
+      theme: string | null; display_name: string | null; folder: string | null; conc: number | null; bps: string | null; email: boolean | null; muted: string[] | null; tg: string | null;
     }>(
       `SELECT p.theme, p.display_name, us.default_download_folder_id AS folder, us.download_concurrency AS conc,
-              us.download_bandwidth_bps AS bps, us.email_notifications AS email, us.muted_kinds AS muted
+              us.download_bandwidth_bps AS bps, us.email_notifications AS email, us.muted_kinds AS muted, us.telegram_notify_destination_id AS tg
          FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id LEFT JOIN user_settings us ON us.user_id = u.id WHERE u.id = $1`, [userId]);
     const x = r.rows[0]!;
     return {
@@ -41,11 +46,13 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
       downloadConcurrency: x.conc,
       downloadBandwidthBps: x.bps === null ? null : Number(x.bps),
       emailNotifications: x.email ?? false,
+      telegramNotifyDestinationId: x.tg,
       mutedKinds: x.muted ?? [],
       limits: {
         downloadConcurrency: config.DOWNLOAD_USER_CONCURRENCY,
         downloadBandwidthBps: config.DOWNLOAD_BANDWIDTH_LIMIT_BPS,
         emailAvailable: emailAvailable(),
+        telegramAvailable: config.TELEGRAM_ENABLED,
       },
     };
   }
@@ -70,6 +77,13 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
     if (b.emailNotifications && !emailAvailable()) {
       throw new HttpError(409, 'email_unavailable', 'This server has no email (SMTP) configured, so email notifications cannot be turned on');
     }
+    if (b.telegramNotifyDestinationId) {
+      if (!config.TELEGRAM_ENABLED) throw new HttpError(409, 'telegram_unavailable', 'Telegram is turned off on this server');
+      const d = (await db.query<{ can_send: boolean; status: string }>(
+        `SELECT d.can_send, b.status FROM telegram_destinations d JOIN telegram_bots b ON b.id = d.bot_id WHERE d.id = $1 AND d.user_id = $2`, [b.telegramNotifyDestinationId, a.userId])).rows[0];
+      if (!d) throw new HttpError(404, 'not_found', 'That Telegram destination was not found');
+      if (!d.can_send || d.status !== 'active') throw new HttpError(409, 'destination_unusable', 'The bot cannot post in that chat right now. Check it on the Telegram page.');
+    }
     const unknown = (b.mutedKinds ?? []).filter((k) => !isKnownKind(k));
     if (unknown.length) throw new HttpError(422, 'unknown_kind', `Unknown notification kind: ${unknown[0]}`);
 
@@ -88,10 +102,21 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
       if (b.downloadConcurrency !== undefined) add('download_concurrency', b.downloadConcurrency);
       if (b.downloadBandwidthBps !== undefined) add('download_bandwidth_bps', b.downloadBandwidthBps || null);
       if (b.emailNotifications !== undefined) add('email_notifications', b.emailNotifications);
+      if (b.telegramNotifyDestinationId !== undefined) add('telegram_notify_destination_id', b.telegramNotifyDestinationId);
       if (b.mutedKinds !== undefined) add('muted_kinds', [...new Set(b.mutedKinds)]);
       if (sets.length) await t.query(`UPDATE user_settings SET ${sets.join(', ')}, updated_at = now() WHERE user_id = $1`, vals);
     });
     return readSettings(a.userId);
+  });
+
+  /** Sends a test message to the chosen destination, so the user finds out now if it works. */
+  app.post('/account/telegram-notify/test', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => {
+    const a = requireAuth(req);
+    const dest = (await db.query<{ d: string | null }>(`SELECT telegram_notify_destination_id AS d FROM user_settings WHERE user_id = $1`, [a.userId])).rows[0]?.d;
+    if (!dest) throw new HttpError(409, 'no_destination', 'Choose a Telegram chat for notifications first');
+    const out = await sendToDestination({ db, vault, config, userId: a.userId, destinationId: dest, text: 'CloudSeed test: notifications will arrive in this chat.' });
+    if (!out.ok) throw new HttpError(502, 'telegram_failed', out.reason);
+    return { ok: true };
   });
 
   // ------------------------------------------------------------------ sessions
