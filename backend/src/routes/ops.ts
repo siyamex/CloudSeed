@@ -38,6 +38,7 @@ export const opsRoutes = (deps: Deps, metrics: HttpMetrics): FastifyPluginAsync 
       rows(`SELECT status AS k, count(*)::int AS n FROM media_assets GROUP BY status`),
       rows(`SELECT role AS k, count(*)::int AS n FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds' GROUP BY role`),
     ]);
+    const backupTs = await rows(`SELECT 'last' AS k, COALESCE(extract(epoch FROM max(finished_at)), 0)::bigint AS n FROM backup_runs WHERE status = 'succeeded' AND verified`);
     const body = metrics.render()
       + gauge('cloudseed_users', 'Users by status.', 'status', users)
       + gauge('cloudseed_files', 'Files that are not in the trash.', null, files.map((r) => ['', r[1]]))
@@ -48,6 +49,7 @@ export const opsRoutes = (deps: Deps, metrics: HttpMetrics): FastifyPluginAsync 
       + gauge('cloudseed_download_jobs', 'Download jobs by state.', 'state', dl)
       + gauge('cloudseed_telegram_transfers', 'Telegram transfers by state.', 'state', tg)
       + gauge('cloudseed_media_assets', 'Derived media assets by state.', 'status', md)
+      + gauge('cloudseed_backup_last_success_timestamp_seconds', 'Unix time of the last successful, verified backup (0 = never).', null, backupTs.map((r) => ['', r[1]]))
       + gauge('cloudseed_workers_alive', 'Worker processes that sent a heartbeat in the last minute.', 'role', workers);
     return reply.header('content-type', 'text/plain; version=0.0.4; charset=utf-8').header('cache-control', 'no-store').send(body);
   });

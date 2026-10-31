@@ -274,6 +274,8 @@ export async function restoreBackup(o: {
           return r;
         },
       });
+      // A backup made while another one was running contains that run as "in progress". It is not, after a restore.
+      await t.query(`UPDATE backup_runs SET status = 'failed', finished_at = now(), error = 'Restored from a backup: this run was still in progress when that backup was made.' WHERE status IN ('requested', 'running')`);
       for (const s of schema.serials) {
         await t.query(`SELECT setval(pg_get_serial_sequence($1, $2), COALESCE((SELECT max(${q(s.column)}) FROM ${q(s.table)}), 0) + 1, false)`, [`public.${s.table}`, s.column]);
         sequencesReset++;

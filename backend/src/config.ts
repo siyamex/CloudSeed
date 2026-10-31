@@ -27,6 +27,8 @@ const schema = z.object({
   SHARING_MAX_DAYS: z.coerce.number().int().positive().default(365),
   SHARING_MAX_ACTIVE_PER_USER: z.coerce.number().int().positive().default(100),
   /** Password attempts per minute per link and client address. */
+  /** Largest number of files in one "download folder as ZIP". */
+  SHARING_ZIP_MAX_FILES: z.coerce.number().int().min(1).max(65_000).default(10_000),
   SHARE_UNLOCK_RATE_PER_MIN: z.coerce.number().int().positive().default(10),
   /** Optional email notifications. Leave SMTP_HOST empty to turn email off. */
   SMTP_HOST: z.string().default(''),
@@ -45,6 +47,16 @@ const schema = z.object({
   QUOTA_WARNING_PERCENT: z.coerce.number().int().min(1).max(100).default(90),
   /** Bearer token for GET /metrics. Leave empty to disable the endpoint. */
   METRICS_TOKEN: z.string().default('').refine((v) => v === '' || v.length >= 16, 'METRICS_TOKEN must be at least 16 characters'),
+  /** Make an encrypted backup every N hours (0 = no schedule; an administrator can still start one by hand). Needs a passphrase. */
+  BACKUP_INTERVAL_HOURS: z.coerce.number().min(0).max(24 * 90).default(0),
+  /** Where the worker writes backups. Mount a volume here, and copy the files off the machine. */
+  BACKUP_DIR: z.string().default('./data/backups'),
+  /** How many finished, verified backups to keep. Older ones are deleted. */
+  BACKUP_KEEP: z.coerce.number().int().min(1).max(1000).default(7),
+  BACKUP_INCLUDE_OBJECTS: bool.default(true),
+  /** 12+ characters. Prefer BACKUP_PASSPHRASE_FILE (a mounted secret) so it does not sit in the environment. */
+  BACKUP_PASSPHRASE: z.string().default(''),
+  BACKUP_PASSPHRASE_FILE: z.string().default(''),
   AUTH_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(20),
   SESSION_SECRET: z.string().default(''),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 14),
@@ -142,6 +154,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (c.STORAGE_BACKEND === 's3' && (!c.S3_BUCKET || !c.S3_ACCESS_KEY_ID || !c.S3_SECRET_ACCESS_KEY)) {
     throw new Error('Invalid configuration: STORAGE_BACKEND=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY');
   }
+
+  if (c.BACKUP_INTERVAL_HOURS > 0 && !c.BACKUP_PASSPHRASE && !c.BACKUP_PASSPHRASE_FILE) {
+    throw new Error('Invalid configuration: BACKUP_INTERVAL_HOURS needs BACKUP_PASSPHRASE or BACKUP_PASSPHRASE_FILE');
+  }
+  if (c.BACKUP_PASSPHRASE && c.BACKUP_PASSPHRASE.length < 12) throw new Error('Invalid configuration: BACKUP_PASSPHRASE must be at least 12 characters');
 
   if (c.NODE_ENV === 'production') {
     const problems: string[] = [];

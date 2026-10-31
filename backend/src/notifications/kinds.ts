@@ -8,6 +8,8 @@ export const NOTIFICATION_KINDS: Record<string, string> = {
   telegram_transfer_failed: 'A Telegram transfer failed',
   share_expiring: 'A share link expires soon',
   share_disabled: 'A share link was disabled by an administrator',
+  backup_failed: 'A scheduled backup failed (administrators)',
+  backup_warning: 'A backup finished with warnings (administrators)',
   integration_disconnected: 'The Telegram bot was disconnected',
 };
 

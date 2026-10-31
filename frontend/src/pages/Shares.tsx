@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Link2, Lock, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Folder, Link2, Lock, Trash2, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ApiError, api, formatBytes, type ShareItem } from '../api';
 import { btnGhost } from '../components/Dialog';
@@ -36,19 +36,19 @@ export function Shares() {
             {shares.map((s) => (
               <li key={s.id} className="space-y-1 px-4 py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-medium">{s.fileName}{s.label ? <span className="font-normal text-muted"> · {s.label}</span> : null}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">{s.kind === 'folder' && <Folder size={14} className="shrink-0 text-muted" aria-label="Folder" />}{s.fileName}{s.label ? <span className="font-normal text-muted"> · {s.label}</span> : null}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS[s.status][1]}`}>{STATUS[s.status][0]}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
                   <span className="flex items-center gap-1">{s.mode === 'public' ? <><Link2 size={12} aria-hidden />Anyone with the link</> : <><Users size={12} aria-hidden />Signed-in users</>}</span>
                   {s.passwordProtected && <span className="flex items-center gap-1"><Lock size={12} aria-hidden />Password</span>}
-                  <span>{formatBytes(s.fileSize)}</span>
+                  {s.kind === 'file' && <span>{formatBytes(s.fileSize)}</span>}
                   <span>{s.status === 'active' ? 'Expires' : 'Expired/ended'} {new Date(s.expiresAt).toLocaleString()}</span>
                   <span>{s.downloadCount}{s.maxDownloads ? ` of ${s.maxDownloads}` : ''} downloads</span>
                   <span>{s.accessCount} views</span>
                   {s.lastAccessedAt && <span>last {new Date(s.lastAccessedAt).toLocaleString()}</span>}
                 </div>
-                {s.fileInTrash && <p className="flex items-center gap-1 text-xs text-danger"><AlertTriangle size={12} aria-hidden />The file is in the trash, so this link does not work until it is restored.</p>}
+                {s.fileInTrash && <p className="flex items-center gap-1 text-xs text-danger"><AlertTriangle size={12} aria-hidden />The {s.kind} is in the trash, so this link does not work until it is restored.</p>}
                 <div className="flex flex-wrap gap-2 pt-1">
                   {s.status === 'active' && <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate({ id: s.id, path: '/revoke' })}>Revoke</button>}
                   {(s.status === 'expired' || s.status === 'exhausted') && (

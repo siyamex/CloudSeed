@@ -20,6 +20,12 @@ x-env: &env
   DOWNLOAD_WORKDIR: /downloads
   MEDIA_WORKDIR: /downloads/media
   MIGRATIONS_DIR: /app/migrations
+  # Automatic encrypted backups every 24 hours into /DATA/AppData/cloudseed/backups. Choose a passphrase of 12+ characters and keep a copy elsewhere:
+  # without it the backups cannot be opened. Set BACKUP_INTERVAL_HOURS to 0 to turn the schedule off.
+  BACKUP_INTERVAL_HOURS: "24"
+  BACKUP_DIR: /backups
+  BACKUP_KEEP: "7"
+  BACKUP_PASSPHRASE: CHANGE-ME-backup-passphrase
 
 services:
   postgres:
@@ -51,6 +57,8 @@ services:
     image: siyamexcom/cloudseed-api:latest
     container_name: cloudseed-api
     restart: unless-stopped
+    # CasaOS creates the folders under /DATA/AppData as root, so the app must be allowed to write to them.
+    user: "0:0"
     environment: *env
     volumes:
       - /DATA/AppData/$AppID/storage:/data
@@ -63,11 +71,13 @@ services:
     image: siyamexcom/cloudseed-api:latest
     container_name: cloudseed-worker
     restart: unless-stopped
+    user: "0:0"
     command: ["node", "dist/worker.js"]
     environment: *env
     volumes:
       - /DATA/AppData/$AppID/storage:/data
       - /DATA/AppData/$AppID/downloads:/downloads
+      - /DATA/AppData/$AppID/backups:/backups
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }

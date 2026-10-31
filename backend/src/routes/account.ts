@@ -138,7 +138,7 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
       ['storageQuota', async () => (await q(`SELECT quota_bytes, used_bytes FROM storage_quotas WHERE user_id = $1`))[0] ?? null],
       ['folders', () => q(`SELECT id, parent_id, name, created_at, deleted_at FROM folders WHERE user_id = $1 ORDER BY created_at`)],
       ['files', () => q(`SELECT id, folder_id, name, size_bytes, mime_type, sha256, status, created_at, deleted_at FROM files WHERE user_id = $1 ORDER BY created_at`)],
-      ['shareLinks', () => q(`SELECT id, file_id, label, mode, expires_at, max_downloads, download_count, access_count, (password_hash IS NOT NULL) AS password_protected, revoked_at, created_at FROM shared_links WHERE user_id = $1 ORDER BY created_at`)],
+      ['shareLinks', () => q(`SELECT id, file_id, folder_id, label, mode, expires_at, max_downloads, download_count, access_count, (password_hash IS NOT NULL) AS password_protected, revoked_at, created_at FROM shared_links WHERE user_id = $1 ORDER BY created_at`)],
       ['downloads', () => q(`SELECT id, url, state, filename, folder_id, total_bytes, bytes_received, error_code, created_at, finished_at FROM download_jobs WHERE user_id = $1 ORDER BY created_at`)],
       ['telegramDestinations', () => q(`SELECT id, title, username, chat_type, created_at FROM telegram_destinations WHERE user_id = $1`)],
       ['telegramTransfers', () => q(`SELECT id, state, created_at FROM telegram_transfers WHERE user_id = $1 ORDER BY created_at`)],

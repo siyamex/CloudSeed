@@ -40,6 +40,7 @@
     "@types/smtp-server": "^3.5.13",
     "cross-env": "^10.1.0",
     "embedded-postgres": "^18.4.0-beta.17",
+    "fflate": "^0.8.3",
     "s3rver": "^3.7.1",
     "smtp-server": "^3.21.3",
     "tsx": "^4.19.0",

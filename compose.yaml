@@ -46,7 +46,8 @@ services:
     environment:
       NODE_ENV: development
       DATABASE_URL: postgres://${POSTGRES_USER:-cloudseed}:${POSTGRES_PASSWORD:-cloudseed}@postgres:5432/${POSTGRES_DB:-cloudseed}
-    volumes: [storage:/data, downloads:/downloads]
+      BACKUP_DIR: /backups
+    volumes: [storage:/data, downloads:/downloads, backups:/backups]
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }

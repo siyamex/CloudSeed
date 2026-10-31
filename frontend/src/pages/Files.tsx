@@ -33,7 +33,7 @@ export function Files() {
   const [dialog, setDialog] = useState<null | { kind: 'mkdir' } | { kind: 'rename'; entry: Entry } | { kind: 'delete'; entries: Entry[] }>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [telegramFiles, setTelegramFiles] = useState<FileItem[] | null>(null);
-  const [shareFile, setShareFile] = useState<FileItem | null>(null);
+  const [shareFile, setShareFile] = useState<{ item: Pick<FileItem, 'id' | 'name' | 'sharingDisabled'>; kind: 'file' | 'folder' } | null>(null);
   const [name, setName] = useState('');
   const [formError, setFormError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -184,7 +184,8 @@ export function Files() {
                   <td className="p-3">
                     <div className="flex justify-end gap-1">
                       {e.kind === 'file' && <a href={`/api/v1/files/${e.item.id}/content`} download aria-label={`Download ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60"><Download size={16} /></a>}
-                      {e.kind === 'file' && <button aria-label={`Share ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setShareFile(e.item)}><Link2 size={16} /></button>}
+                      {e.kind === 'file' && <button aria-label={`Share ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setShareFile({ item: e.item, kind: 'file' })}><Link2 size={16} /></button>}
+                      {e.kind === 'folder' && <button aria-label={`Share folder ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setShareFile({ item: e.item, kind: 'folder' })}><Link2 size={16} /></button>}
                       {e.kind === 'file' && <button aria-label={`Send ${e.item.name} to Telegram`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => setTelegramFiles([e.item])}><Send size={16} /></button>}
                       <button aria-label={`Rename ${e.item.name}`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setName(e.item.name); setFormError(''); setDialog({ kind: 'rename', entry: e }); }}><Pencil size={16} /></button>
                       <button aria-label={`Move ${e.item.name} to trash`} className="rounded p-1.5 text-muted hover:bg-line/60" onClick={() => { setFormError(''); setDialog({ kind: 'delete', entries: [e] }); }}><Trash2 size={16} /></button>
@@ -239,7 +240,7 @@ export function Files() {
           <button className={btnDanger} disabled={mutate.isPending} onClick={confirmDelete}>Move to trash</button></div>
       </Dialog>
 
-      {shareFile && <ShareDialog file={shareFile} maxDays={365} onClose={() => setShareFile(null)} onChanged={refresh} />}
+      {shareFile && <ShareDialog file={shareFile.item} kind={shareFile.kind} maxDays={365} onClose={() => setShareFile(null)} onChanged={refresh} />}
       {telegramFiles && <SendToTelegram files={telegramFiles} onClose={() => setTelegramFiles(null)} />}
 
       <Dialog open={conflict !== null} title="File already exists" onClose={() => setConflict(null)}>

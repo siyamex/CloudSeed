@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireAdmin, type Deps } from '../app.js';
 import { HttpError } from '../errors.js';
+import { passphraseConfigured } from '../backup/scheduler.js';
 
 const uuid = z.string().uuid();
 const page = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) });
@@ -38,11 +39,55 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
       one<{ open: number }>(`SELECT count(*)::int AS open FROM abuse_reports WHERE status = 'open'`),
       one<{ alive: number }>(`SELECT count(*)::int AS alive FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds'`),
     ]);
+    const lastBackup = (await db.query<{ finished_at: string; verified: boolean }>(`SELECT finished_at, verified FROM backup_runs WHERE status = 'succeeded' ORDER BY finished_at DESC LIMIT 1`)).rows[0];
+    const lastFailed = (await db.query<{ finished_at: string }>(`SELECT finished_at FROM backup_runs WHERE status = 'failed' ORDER BY finished_at DESC LIMIT 1`)).rows[0];
     return {
       users: users, storage: { files: storage.files, usedBytes: Number(storage.used), quotaBytes: Number(storage.quota) },
       activeShareLinks: shares.active, openAbuseReports: reports.open, workersAlive: workers.alive,
+      backup: {
+        ...backupConfig(), lastSuccessAt: lastBackup?.finished_at ?? null, lastVerified: lastBackup?.verified ?? null,
+        lastFailureAt: lastFailed && (!lastBackup || new Date(lastFailed.finished_at) > new Date(lastBackup.finished_at)) ? lastFailed.finished_at : null,
+      },
       features: { email: config.SMTP_HOST !== '', sharing: config.SHARING_ENABLED, telegram: config.TELEGRAM_ENABLED, media: config.MEDIA_ENABLED, metrics: config.METRICS_TOKEN !== '' },
     };
+  });
+
+  // ------------------------------------------------------------------ backups
+  const backupConfig = () => ({
+    enabled: config.BACKUP_INTERVAL_HOURS > 0, intervalHours: config.BACKUP_INTERVAL_HOURS, keep: config.BACKUP_KEEP, directory: config.BACKUP_DIR,
+    includeObjects: config.BACKUP_INCLUDE_OBJECTS, passphraseConfigured: passphraseConfigured(config),
+  });
+
+  app.get('/admin/backups', async () => {
+    const r = await db.query<{ id: string; trigger: string; status: string; requested_at: string; started_at: string | null; finished_at: string | null; file_name: string | null;
+      bytes: number | null; row_count: number | null; object_count: number | null; missing_count: number; corrupt_count: number; verified: boolean; pruned_at: string | null; error: string | null }>(
+      `SELECT id, trigger, status, requested_at, started_at, finished_at, file_name, bytes, row_count, object_count, missing_count, corrupt_count, verified, pruned_at, error
+         FROM backup_runs ORDER BY requested_at DESC LIMIT 50`);
+    return {
+      config: backupConfig(),
+      runs: r.rows.map((x) => ({
+        id: x.id, trigger: x.trigger, status: x.status, requestedAt: x.requested_at, startedAt: x.started_at, finishedAt: x.finished_at,
+        fileName: x.pruned_at ? null : x.file_name, bytes: x.bytes === null ? null : Number(x.bytes), rows: x.row_count, objects: x.object_count,
+        missing: x.missing_count, corrupt: x.corrupt_count, verified: x.verified, pruned: x.pruned_at !== null, error: x.error,
+      })),
+    };
+  });
+
+  app.post('/admin/backups/run', async (req, reply) => {
+    const admin = requireAdmin(req);
+    if (!passphraseConfigured(config)) {
+      throw new HttpError(409, 'backup_not_configured', 'Set BACKUP_PASSPHRASE_FILE (or BACKUP_PASSPHRASE) for the worker first. A backup is always encrypted.');
+    }
+    const id = await db.tx(async (t) => {
+      await t.query('SELECT pg_advisory_xact_lock(7302)');
+      if ((await t.query(`SELECT 1 FROM backup_runs WHERE status IN ('requested', 'running')`)).rowCount) {
+        throw new HttpError(409, 'backup_in_progress', 'A backup is already waiting or running.');
+      }
+      const r = await t.query<{ id: string }>(`INSERT INTO backup_runs (trigger, requested_by) VALUES ('manual', $1) RETURNING id`, [admin.userId]);
+      await t.query(`INSERT INTO audit_logs (user_id, action, target, ip) VALUES ($1, 'admin.backup_requested', $2, $3)`, [admin.userId, `backup:${r.rows[0]!.id}`, req.ip]);
+      return r.rows[0]!.id;
+    });
+    return reply.status(202).send({ id });
   });
 
   // ------------------------------------------------------------------ users
@@ -164,9 +209,9 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
       if (rep.status !== 'open') throw new HttpError(409, 'already_resolved', 'This report has already been resolved');
       let notified = false;
       if (b.action !== 'dismiss' && rep.share_id) {
-        const s = (await t.query<{ file_id: string; user_id: string }>(`UPDATE shared_links SET disabled_by_admin = TRUE WHERE id = $1 RETURNING file_id, user_id`, [rep.share_id])).rows[0];
+        const s = (await t.query<{ file_id: string | null; user_id: string }>(`UPDATE shared_links SET disabled_by_admin = TRUE WHERE id = $1 RETURNING file_id, user_id`, [rep.share_id])).rows[0];
         if (s) {
-          if (b.action === 'disable_link_and_file') {
+          if (b.action === 'disable_link_and_file' && s.file_id) { // a folder link has no single file to block; the link itself is disabled
             await t.query(`UPDATE files SET sharing_disabled = TRUE WHERE id = $1`, [s.file_id]);
             await t.query(`UPDATE shared_links SET disabled_by_admin = TRUE WHERE file_id = $1`, [s.file_id]);
           }

@@ -2,11 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import {
   ApiError, api, formatBytes, formatDuration,
-  type AdminOverview, type AdminQueues, type AdminReport, type AdminUser, type AdminWorker, type AuditEntry,
+  type AdminOverview, type AdminQueues, type BackupConfig, type BackupRun, type AdminReport, type AdminUser, type AdminWorker, type AuditEntry,
 } from '../api';
 import { btnDanger, btnGhost, btnPrimary } from '../components/Dialog';
 
-const TABS = ['Overview', 'Users', 'Reports', 'Operations', 'Audit log', 'Settings'] as const;
+const TABS = ['Overview', 'Users', 'Reports', 'Backups', 'Operations', 'Audit log', 'Settings'] as const;
 type Tab = (typeof TABS)[number];
 const input = 'rounded-md border border-line bg-bg px-3 py-1.5 text-sm';
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : e ? 'Request failed' : null);
@@ -30,6 +30,7 @@ function Overview() {
         <p className="text-sm text-muted">{o.storage.files} files · {pct}% of {formatBytes(o.storage.quotaBytes)} allocated in quotas</p></Card>
       <Card title="Workers"><p className={`text-2xl font-semibold ${o.workersAlive ? '' : 'text-danger'}`}>{o.workersAlive}</p>
         <p className="text-sm text-muted">{o.workersAlive ? 'running (heard from in the last minute)' : 'none running: downloads, Telegram and media processing are stalled'}</p></Card>
+      <Card title="Backups"><BackupSummary b={o.backup} /></Card>
       <Card title="Share links"><p className="text-2xl font-semibold">{o.activeShareLinks}</p><p className="text-sm text-muted">active</p></Card>
       <Card title="Abuse reports"><p className={`text-2xl font-semibold ${o.openAbuseReports ? 'text-danger' : ''}`}>{o.openAbuseReports}</p><p className="text-sm text-muted">waiting for review</p></Card>
       <Card title="Features">
@@ -39,6 +40,86 @@ function Overview() {
         </ul>
         <p className="mt-2 text-xs text-muted">These are set with environment variables on the server.</p>
       </Card>
+    </div>
+  );
+}
+
+const ago = (iso: string) => {
+  const h = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : h < 48 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} days ago`;
+};
+
+function BackupSummary({ b }: { b: AdminOverview['backup'] }) {
+  const stale = b.lastSuccessAt === null || (b.enabled && Date.now() - new Date(b.lastSuccessAt).getTime() > b.intervalHours * 2 * 3_600_000);
+  return (
+    <>
+      <p className={`text-2xl font-semibold ${stale ? 'text-danger' : ''}`}>{b.lastSuccessAt ? ago(b.lastSuccessAt) : 'Never'}</p>
+      <p className="text-sm text-muted">
+        {b.lastSuccessAt ? `last verified backup${b.lastVerified ? '' : ' (not verified)'}` : 'no backup has been made yet'}
+        {b.enabled ? ` · every ${b.intervalHours} h` : ' · no schedule'}
+      </p>
+      {b.lastFailureAt && <p role="alert" className="mt-1 text-xs text-danger">The latest attempt failed ({ago(b.lastFailureAt)}). See the Backups tab.</p>}
+      {!b.enabled && !b.lastSuccessAt && <p className="mt-1 text-xs text-muted">Set BACKUP_INTERVAL_HOURS to make backups automatically.</p>}
+    </>
+  );
+}
+
+function Backups() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ['admin', 'backups'], queryFn: () => api<{ config: BackupConfig; runs: BackupRun[] }>('/admin/backups'),
+    refetchInterval: (query) => (query.state.data?.runs.some((r) => r.status === 'requested' || r.status === 'running') ? 3_000 : 20_000),
+  });
+  const run = useMutation({
+    mutationFn: () => api('/admin/backups/run', { method: 'POST', body: {} }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin'] }),
+  });
+  if (q.isPending) return <Loading />;
+  if (q.error) return <p role="alert" className="text-danger">{q.error.message}</p>;
+  const { config: c, runs } = q.data;
+  const busy = runs.some((r) => r.status === 'requested' || r.status === 'running');
+  const state = (r: BackupRun) => r.status === 'succeeded' ? (r.missing || r.corrupt ? ['Done with warnings', 'bg-danger/10 text-danger'] : ['Verified', 'bg-accent/10 text-accent'])
+    : r.status === 'failed' ? ['Failed', 'bg-danger/10 text-danger'] : [r.status === 'running' ? 'Running…' : 'Waiting for a worker…', 'bg-line/70 text-muted'];
+  return (
+    <div className="space-y-3">
+      <Card title="Settings">
+        <ul className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <li>Schedule: <strong>{c.enabled ? `every ${c.intervalHours} h` : 'off'}</strong></li>
+          <li>Keeps the last <strong>{c.keep}</strong> backups</li>
+          <li>Stored files included: <strong>{c.includeObjects ? 'yes' : 'no (database only)'}</strong></li>
+          <li>Encryption passphrase: <strong className={c.passphraseConfigured ? '' : 'text-danger'}>{c.passphraseConfigured ? 'set' : 'not set'}</strong></li>
+          <li className="sm:col-span-2">Folder on the worker: <code className="text-xs">{c.directory}</code></li>
+        </ul>
+        <p className="mt-2 text-xs text-muted">Backups are encrypted files. <strong>Copy them off this machine</strong> (another disk, another site); a backup on the same disk does not survive the disk failing. They do not contain ENCRYPTION_KEY, so keep that safe too.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button className={btnPrimary} disabled={run.isPending || busy || !c.passphraseConfigured} onClick={() => run.mutate()}>{busy ? 'A backup is in progress…' : 'Back up now'}</button>
+          {!c.passphraseConfigured && <span className="text-xs text-danger">Set BACKUP_PASSPHRASE_FILE (or BACKUP_PASSPHRASE) on the worker first.</span>}
+          {run.error && <span role="alert" className="text-xs text-danger">{errText(run.error)}</span>}
+        </div>
+      </Card>
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+        <table className="w-full min-w-[40rem] text-sm">
+          <thead className="text-left text-xs text-muted"><tr><th className="px-3 py-2 font-medium">When</th><th className="font-medium">How</th><th className="font-medium">Result</th><th className="font-medium">Contents</th><th className="font-medium">File</th></tr></thead>
+          <tbody>
+            {runs.map((r) => {
+              const [label, cls] = state(r);
+              return (
+                <tr key={r.id} className="border-t border-line align-top">
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{new Date(r.requestedAt).toLocaleString()}</td>
+                  <td>{r.trigger === 'schedule' ? 'Scheduled' : 'By hand'}</td>
+                  <td><span className={`rounded-full px-2 py-0.5 text-xs ${cls}`}>{label}</span>
+                    {r.error && <p className="mt-1 max-w-72 break-words text-xs text-danger">{r.error}</p>}
+                    {(r.missing > 0 || r.corrupt > 0) && <p className="mt-1 text-xs text-danger">{r.missing} stored file(s) missing, {r.corrupt} damaged when it was made</p>}</td>
+                  <td className="text-xs text-muted">{r.rows !== null ? `${r.rows} rows, ${r.objects} files, ${formatBytes(r.bytes ?? 0)}` : ''}</td>
+                  <td className="max-w-48 truncate font-mono text-xs text-muted" title={r.fileName ?? undefined}>{r.pruned ? 'deleted (older than the keep limit)' : r.fileName ?? ''}</td>
+                </tr>
+              );
+            })}
+            {runs.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-muted">No backups yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted">To check that a backup really restores, run <code>cli restore-test &lt;file&gt;</code>: it restores into a throwaway database and deletes it again.</p>
     </div>
   );
 }
@@ -289,6 +370,7 @@ export function Admin({ selfId }: { selfId: string }) {
         {tab === 'Overview' && <Overview />}
         {tab === 'Users' && <Users selfId={selfId} />}
         {tab === 'Reports' && <Reports />}
+        {tab === 'Backups' && <Backups />}
         {tab === 'Operations' && <Operations />}
         {tab === 'Audit log' && <Audit />}
         {tab === 'Settings' && <ServerSettings />}

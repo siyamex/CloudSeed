@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { checkPassphrase, createBackup, restoreBackup, verifyBackup } from './backup/backup.js';
+import { restoreDrill } from './backup/drill.js';
 import { loadConfig } from './config.js';
 import { createPgDb } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -14,6 +15,7 @@ const USAGE = `CloudSeed command line tools
   cli backup --out <file> [--no-objects] [--strict]   Encrypted backup of the database and (by default) all stored files
   cli verify <file>                                     Check a backup's integrity without touching anything
   cli restore <file> --yes                              Restore into an EMPTY database (runs migrations first)
+  cli restore-test <file>                               Prove a backup restores: loads it into a throwaway database and directory, checks it, deletes both
   cli reconcile [--delete-orphans] [--fix-quotas] [--grace-hours 24] [--json]
                                                         Compare the database with storage; exits 1 if anything is off
   cli migrate-storage --from local --to s3 [--dry-run] [--delete-originals]
@@ -82,6 +84,17 @@ async function main(argv: string[]): Promise<number> {
         say(`Restored ${r.totalRows} rows and ${r.objects.count} objects (${mb(r.objects.bytes)}) from the backup made ${r.createdAt}.`);
         say('Next: start the app with the SAME ENCRYPTION_KEY as before, then run "cli reconcile".');
         return 0;
+      }
+      case 'restore-test': {
+        const file = positionals[0];
+        if (!file) throw new Error('usage: cli restore-test <file>');
+        const r = await restoreDrill({ databaseUrl: config.DATABASE_URL, migrationsDir: config.MIGRATIONS_DIR, file, passphrase: await passphrase(), log: say });
+        say(`Restored ${r.restored.totalRows} rows and ${r.restored.objects.count} objects into a temporary database; it has been deleted again.`);
+        for (const m of r.rowMismatches) say(`MISMATCH  ${m.table}: archive has ${m.expected} rows, restored database has ${m.actual}`);
+        for (const m of r.reconcile.missing) say(`MISSING   ${m.table} ${m.id}`);
+        for (const m of r.reconcile.sizeMismatch) say(`SIZE      ${m.id}: recorded ${m.recorded}, restored ${m.stored}`);
+        say(r.ok ? 'RESTORE TEST PASSED: this backup can be restored.' : 'RESTORE TEST FAILED: do not rely on this backup.');
+        return r.ok ? 0 : 1;
       }
       case 'reconcile': {
         const r = await reconcile({

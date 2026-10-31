@@ -8,7 +8,8 @@ const LIFETIMES: [string, number][] = [['1 hour', 1], ['24 hours', 24], ['7 days
 type Created = ShareItem & { token: string; url: string };
 
 /** Creates a share link. The link itself is shown once: the server keeps only a hash of it. */
-export function ShareDialog({ file, maxDays, onClose, onChanged }: { file: FileItem; maxDays: number; onClose: () => void; onChanged: () => void }) {
+export function ShareDialog({ file, kind = 'file', maxDays, onClose, onChanged }: { file: Pick<FileItem, 'id' | 'name' | 'sharingDisabled'>; kind?: 'file' | 'folder'; maxDays: number; onClose: () => void; onChanged: () => void }) {
+  const noun = kind === 'folder' ? 'folder' : 'file';
   const qc = useQueryClient();
   const [mode, setMode] = useState<'public' | 'private'>('public');
   const [hours, setHours] = useState(168);
@@ -21,7 +22,7 @@ export function ShareDialog({ file, maxDays, onClose, onChanged }: { file: FileI
 
   const create = useMutation({
     mutationFn: () => api<Created>('/shares', { method: 'POST', body: {
-      fileId: file.id, expiresInHours: hours, mode, acknowledgePublic: mode === 'public' ? ack : undefined,
+      ...(kind === 'folder' ? { folderId: file.id } : { fileId: file.id }), expiresInHours: hours, mode, acknowledgePublic: mode === 'public' ? ack : undefined,
       maxDownloads: limit ? Number(limit) : null, password: password || null,
     } }),
     onSuccess: (c) => { setCreated(c); void qc.invalidateQueries({ queryKey: ['shares'] }); },
@@ -44,14 +45,14 @@ export function ShareDialog({ file, maxDays, onClose, onChanged }: { file: FileI
             <button className={btnPrimary} onClick={() => { void navigator.clipboard?.writeText(created.url).then(() => setCopied(true)).catch(() => undefined); }}>
               {copied ? <><Check size={14} className="mr-1 inline" aria-hidden />Copied</> : <><Copy size={14} className="mr-1 inline" aria-hidden />Copy</>}</button>
           </div>
-          <p className="text-muted">{created.mode === 'public' ? 'Anyone with this link can download the file' : 'Only people signed in to this CloudSeed can open it'}{created.passwordProtected ? ', after entering the password' : ''}, until {new Date(created.expiresAt).toLocaleString()}{created.maxDownloads ? ` or ${created.maxDownloads} download(s)` : ''}.</p>
+          <p className="text-muted">{created.mode === 'public' ? `Anyone with this link can ${kind === 'folder' ? 'browse and download this folder' : 'download the file'}` : 'Only people signed in to this CloudSeed can open it'}{created.passwordProtected ? ', after entering the password' : ''}, until {new Date(created.expiresAt).toLocaleString()}{created.maxDownloads ? ` or ${created.maxDownloads} download(s)` : ''}.</p>
           <div className="flex justify-end"><button className={btnGhost} onClick={onClose}>Done</button></div>
         </div>
       </Dialog>
     );
   }
 
-  if (file.sharingDisabled) {
+  if (kind === 'file' && file.sharingDisabled) {
     return (
       <Dialog open title="Sharing is off for this file" onClose={onClose}>
         <p className="text-sm text-muted">“{file.name}” cannot be shared and has no active links.</p>
@@ -72,7 +73,7 @@ export function ShareDialog({ file, maxDays, onClose, onChanged }: { file: FileI
         </fieldset>
         {mode === 'public' && (
           <label className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/5 p-2"><input type="checkbox" className="mt-1" checked={ack} onChange={(e) => setAck(e.target.checked)} />
-            <span>I understand that anyone who gets this link can download the file. A public link is not private.</span></label>
+            <span>I understand that anyone who gets this link can download {kind === 'folder' ? 'everything in this folder, including files added later' : 'the file'}. A public link is not private.</span></label>
         )}
         <label className="block"><span className="mb-1 block text-muted">Expires after</span>
           <select value={hours} onChange={(e) => setHours(Number(e.target.value))} className="rounded-md border border-line bg-bg px-2 py-2">
@@ -83,7 +84,7 @@ export function ShareDialog({ file, maxDays, onClose, onChanged }: { file: FileI
           <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-md border border-line bg-bg px-3 py-2" /></label>
         {error && <p role="alert" className="text-danger">{error}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <button type="button" className="text-xs text-muted hover:underline" onClick={() => setSharing.mutate(true)}>Never allow sharing this file</button>
+          {kind === 'file' ? <button type="button" className="text-xs text-muted hover:underline" onClick={() => setSharing.mutate(true)}>Never allow sharing this file</button> : <span className="text-xs text-muted">Files with sharing turned off are left out.</span>}
           <span className="flex gap-2"><button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
             <button type="submit" className={btnPrimary} disabled={create.isPending || (mode === 'public' && !ack) || (password.length > 0 && password.length < 8)}>{create.isPending ? 'Creating…' : 'Create link'}</button></span>
         </div>

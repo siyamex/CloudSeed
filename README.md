@@ -228,6 +228,16 @@ Users with an address in `ADMIN_EMAILS` (or promoted by another administrator) g
 
 ## Backup, restore and maintenance
 
+### Scheduled backups
+
+Set `BACKUP_INTERVAL_HOURS=24` and a passphrase (`BACKUP_PASSPHRASE_FILE` is better than `BACKUP_PASSPHRASE`) and the **worker** makes an encrypted backup every 24 hours into `BACKUP_DIR` (the `backups` volume). Each file is read back and fully verified before it counts; only the newest `BACKUP_KEEP` verified backups are kept. If an attempt fails (or finishes with missing files) every administrator gets a notification, and a failed attempt is retried after an hour. **Administration > Backups** shows the history, whether the last backup is verified, and a **Back up now** button; the Overview warns when the last good backup is older than twice the interval, and `/metrics` exposes `cloudseed_backup_last_success_timestamp_seconds` so you can alert on it.
+
+The schedule counts hours from the last attempt (not clock times). **Copy the files off the machine**: a backup on the same disk does not survive the disk. The schedule does not do that for you (use `rclone`, `rsync` or a second disk on a timer).
+
+To *prove* a backup restores, not just that it decrypts, run `cli restore-test <file>`: it restores into a throwaway database and directory (it can never write to your real database or S3 bucket), checks row counts and that every stored file exists, and deletes both. It needs a database user with `CREATEDB`.
+
+### By hand with the command line
+
 State lives in PostgreSQL and in the storage backend (local volume or S3 bucket). The `cli` tool backs up both **consistently**, as one encrypted file:
 
 ```bash

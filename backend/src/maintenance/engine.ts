@@ -3,6 +3,8 @@ import { writeFile } from 'node:fs/promises';
 import type { Config } from '../config.js';
 import type { Db } from '../db/index.js';
 import type { Mailer } from '../mail/mailer.js';
+import { BackupScheduler } from '../backup/scheduler.js';
+import type { StorageAdapter } from '../storage/types.js';
 
 export interface Logger {
   info(o: object, msg?: string): void;
@@ -19,6 +21,8 @@ export interface MaintenanceOptions {
   role?: string;
   workerId?: string;
   aliveFile?: string;
+  /** Needed for backups of stored files. Without it the engine does no backups. */
+  adapterFor?: (kind: string) => StorageAdapter | undefined;
 }
 
 const SWEEP_EVERY_MS = 5 * 60_000;
@@ -34,11 +38,14 @@ export class MaintenanceEngine {
   private ticking = false;
   private lastSweep = 0;
   private lastBeat = 0;
+  private lastBackupCheck = 0;
+  private readonly backups?: BackupScheduler;
   readonly workerId: string;
   readonly startedAt = new Date();
 
   constructor(private readonly o: MaintenanceOptions) {
     this.workerId = o.workerId ?? `maint-${process.pid}-${randomUUID().slice(0, 8)}`;
+    if (o.adapterFor) this.backups = new BackupScheduler({ db: o.db, config: o.config, adapterFor: o.adapterFor, log: o.log, workerId: this.workerId });
   }
 
   private get db() { return this.o.db; }
@@ -63,6 +70,7 @@ export class MaintenanceEngine {
       if (this.o.aliveFile) await writeFile(this.o.aliveFile, String(Date.now())).catch(() => undefined);
       const now = Date.now();
       if (now - this.lastBeat > 10_000) { this.lastBeat = now; await this.heartbeat().catch((err) => this.o.log.warn({ err }, 'heartbeat failed')); }
+      if (this.backups && now - this.lastBackupCheck > 5_000) { this.lastBackupCheck = now; this.backups.tick(); } // runs in the background: a backup can take minutes
       await this.sendEmails().catch((err) => this.o.log.error({ err }, 'email sweep failed'));
       if (now - this.lastSweep > SWEEP_EVERY_MS) {
         this.lastSweep = now;
@@ -140,10 +148,10 @@ export class MaintenanceEngine {
       `WITH due AS (
          UPDATE shared_links s SET expiry_notified = TRUE
           WHERE s.revoked_at IS NULL AND NOT s.disabled_by_admin AND NOT s.expiry_notified AND s.expires_at > now() AND s.expires_at <= now() + interval '24 hours'
-          RETURNING s.user_id, s.file_id, s.expires_at)
+          RETURNING s.user_id, s.file_id, s.folder_id, s.expires_at)
        INSERT INTO notifications (user_id, kind, title, body)
-       SELECT d.user_id, 'share_expiring', 'A share link expires soon', format('The link to "%s" expires at %s UTC.', f.name, to_char(d.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'))
-         FROM due d JOIN files f ON f.id = d.file_id`);
+       SELECT d.user_id, 'share_expiring', 'A share link expires soon', format('The link to "%s" expires at %s UTC.', COALESCE(f.name, g.name), to_char(d.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'))
+         FROM due d LEFT JOIN files f ON f.id = d.file_id LEFT JOIN folders g ON g.id = d.folder_id`);
     await this.db.query(`DELETE FROM notifications WHERE created_at < now() - make_interval(days => $1)`, [this.cfg.NOTIFICATION_RETENTION_DAYS]);
     await this.db.query(`DELETE FROM sessions WHERE expires_at < now() - interval '1 day'`);
     await this.db.query(`DELETE FROM oauth_login_states WHERE expires_at < now() - interval '1 hour'`);

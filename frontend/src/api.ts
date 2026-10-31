@@ -117,11 +117,15 @@ export interface MediaDetail extends MediaItem {
 }
 
 export interface ShareItem {
-  id: string; fileId: string; fileName: string; fileSize: number; label: string | null; mode: 'public' | 'private';
+  id: string; kind: 'file' | 'folder'; folderId: string | null; fileId: string | null; fileName: string; fileSize: number; label: string | null; mode: 'public' | 'private';
   status: 'active' | 'expired' | 'revoked' | 'exhausted' | 'disabled'; expiresAt: string; maxDownloads: number | null; downloadCount: number; accessCount: number;
   passwordProtected: boolean; createdAt: string; lastAccessedAt: string | null; revokedAt: string | null; fileInTrash: boolean;
 }
-export interface PublicShare { name: string; size: number; mode: 'public' | 'private'; passwordRequired: boolean; unlocked: boolean; expiresAt: string; downloadsLeft: number | null }
+export interface PublicFolderListing {
+  folder: string; path: { id: string; name: string }[]; folders: { id: string; name: string }[];
+  files: { id: string; name: string; size: number; modifiedAt: string }[]; truncated: boolean;
+}
+export interface PublicShare { kind: 'file' | 'folder'; name: string; size: number; mode: 'public' | 'private'; passwordRequired: boolean; unlocked: boolean; expiresAt: string; downloadsLeft: number | null }
 
 export function formatClock(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms)) return '–:––';
@@ -155,7 +159,13 @@ export interface SessionItem { id: string; current: boolean; userAgent: string |
 export interface AdminOverview {
   users: { active: number; disabled: number }; storage: { files: number; usedBytes: number; quotaBytes: number };
   activeShareLinks: number; openAbuseReports: number; workersAlive: number;
+  backup: BackupConfig & { lastSuccessAt: string | null; lastVerified: boolean | null; lastFailureAt: string | null };
   features: { email: boolean; sharing: boolean; telegram: boolean; media: boolean; metrics: boolean };
+}
+export interface BackupConfig { enabled: boolean; intervalHours: number; keep: number; directory: string; includeObjects: boolean; passphraseConfigured: boolean }
+export interface BackupRun {
+  id: string; trigger: 'schedule' | 'manual'; status: 'requested' | 'running' | 'succeeded' | 'failed'; requestedAt: string; startedAt: string | null; finishedAt: string | null;
+  fileName: string | null; bytes: number | null; rows: number | null; objects: number | null; missing: number; corrupt: number; verified: boolean; pruned: boolean; error: string | null;
 }
 export interface AdminUser { id: string; email: string; status: 'active' | 'disabled'; roles: string[]; createdAt: string; lastSeenAt: string | null; quotaBytes: number | null; usedBytes: number | null; files: number }
 export interface AdminReport {
