@@ -158,11 +158,19 @@ export interface AccountSettings {
 }
 export interface SessionItem { id: string; current: boolean; userAgent: string | null; ip: string | null; createdAt: string; lastSeenAt: string; expiresAt: string }
 
+export interface TorrentFile { i: number; path: string; size: number; selected: boolean; imported?: boolean }
+export interface TorrentItem {
+  id: string; source: 'magnet' | 'file'; name: string | null; infoHash: string; state: string; folderId: string | null; resultFolderId: string | null;
+  fileCount: number; selectedCount: number; importedFiles: number; totalBytes: number | null; selectedBytes: number | null; bytesDone: number; percent: number | null;
+  peers: number; downBps: number; upBps: number; autoStart: boolean; error: { code: string; message: string | null } | null; createdAt: string; updatedAt: string; finishedAt: string | null;
+  files?: TorrentFile[];
+}
+export interface TorrentStatus { enabled: boolean; notice: string; limits: { maxFiles: number; maxActivePerUser: number; maxFileBytes: number; torrentFileMaxBytes: number } }
 export interface AdminOverview {
   users: { active: number; disabled: number }; storage: { files: number; usedBytes: number; quotaBytes: number };
   activeShareLinks: number; openAbuseReports: number; workersAlive: number;
   backup: BackupConfig & { lastSuccessAt: string | null; lastVerified: boolean | null; lastFailureAt: string | null };
-  features: { email: boolean; sharing: boolean; telegram: boolean; media: boolean; metrics: boolean };
+  features: { email: boolean; torrents: boolean; sharing: boolean; telegram: boolean; media: boolean; metrics: boolean };
 }
 export interface BackupConfig { enabled: boolean; intervalHours: number; keep: number; directory: string; includeObjects: boolean; passphraseConfigured: boolean }
 export interface BackupRun {
@@ -178,6 +186,7 @@ export interface AdminQueues {
   downloads: { state: string; count: number; oldestSeconds: number | null; expiredLeases: number }[];
   telegram: { state: string; count: number; oldestSeconds: number | null }[];
   media: { state: string; count: number; oldestSeconds: number | null }[];
+  torrents: { state: string; count: number; oldestSeconds: number | null }[];
   recentDownloadFailures: { id: string; code: string | null; at: string }[];
 }
 export interface AdminWorker { id: string; role: string; startedAt: string; lastSeenAt: string; pid: number | null; host: string | null; info: Record<string, unknown>; alive: boolean }

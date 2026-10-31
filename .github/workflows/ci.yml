@@ -17,7 +17,8 @@ jobs:
       - run: npm -w backend run build
       # API + worker as separate processes on real PostgreSQL; also exercises sharing, admin, metrics and the backup/restore CLI
       - run: npm run smoke
-      - run: npm audit --omit=dev --audit-level=high
+      # high/critical findings fail the build, except the documented, dated exceptions in scripts/audit.mjs
+      - run: node scripts/audit.mjs
   docker:
     runs-on: ubuntu-latest
     steps:

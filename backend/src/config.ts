@@ -65,6 +65,29 @@ const schema = z.object({
   /** 12+ characters. Prefer BACKUP_PASSPHRASE_FILE (a mounted secret) so it does not sit in the environment. */
   BACKUP_PASSPHRASE: z.string().default(''),
   BACKUP_PASSPHRASE_FILE: z.string().default(''),
+  /**
+   * BitTorrent downloads. OFF by default: a torrent client talks to peers chosen by strangers, and your server's address becomes
+   * visible to them. Read the README section on torrents before turning this on. An administrator can also switch it off at run time.
+   */
+  TORRENT_ENABLED: bool.default(false),
+  TORRENT_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(2),
+  TORRENT_MAX_ACTIVE_PER_USER: z.coerce.number().int().min(1).max(100).default(10),
+  TORRENT_MAX_FILES: z.coerce.number().int().min(1).max(100_000).default(2000),
+  TORRENT_METADATA_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  /** Give up on a download that has made no progress for this many minutes. */
+  TORRENT_STALL_MINUTES: z.coerce.number().positive().default(30),
+  TORRENT_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  /** Upload (sharing back to the swarm) in bytes/s, shared by all torrents. Peers expect some; 0 turns it off almost entirely. */
+  TORRENT_UPLOAD_LIMIT_BPS: z.coerce.number().int().min(0).default(1024 * 1024),
+  TORRENT_DOWNLOAD_LIMIT_BPS: z.coerce.number().int().min(0).default(0),
+  TORRENT_MAX_CONNS: z.coerce.number().int().min(5).max(500).default(40),
+  /** Use the BitTorrent DHT to find peers (trackers are used either way). */
+  TORRENT_DHT: bool.default(true),
+  /** TCP port for incoming peers (0 = random). Forward it on your router to be reachable; downloads work without. */
+  TORRENT_PORT: z.coerce.number().int().min(0).max(65535).default(0),
+  /** Networks peers and trackers may be in even though they are private (empty = none). Only for labs and tests. */
+  TORRENT_ALLOWED_CIDRS: z.string().default(''),
+  TORRENT_WORKDIR: z.string().default(''),
   AUTH_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(20),
   SESSION_SECRET: z.string().default(''),
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 14),

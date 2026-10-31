@@ -36,7 +36,7 @@ function Overview() {
       <Card title="Features">
         <ul className="grid grid-cols-2 gap-x-4 text-sm">
           <li>Email {feat(o.features.email)}</li><li>Sharing {feat(o.features.sharing)}</li><li>Telegram {feat(o.features.telegram)}</li>
-          <li>Media {feat(o.features.media)}</li><li>Metrics {feat(o.features.metrics)}</li>
+          <li>Torrents {feat(o.features.torrents)}</li><li>Media {feat(o.features.media)}</li><li>Metrics {feat(o.features.metrics)}</li>
         </ul>
         <p className="mt-2 text-xs text-muted">These are set with environment variables on the server.</p>
       </Card>
@@ -272,6 +272,7 @@ function Operations() {
           <Card title="Downloads">{table(queues.data.downloads)}</Card>
           <Card title="Telegram transfers">{table(queues.data.telegram)}</Card>
           <Card title="Media processing">{table(queues.data.media)}</Card>
+          <Card title="Torrents">{table(queues.data.torrents)}</Card>
           <div className="lg:col-span-3"><Card title="Recent download failures (error codes only)">
             {queues.data.recentDownloadFailures.length === 0 ? <p className="text-sm text-muted">None.</p> : (
               <ul className="grid gap-x-6 text-sm sm:grid-cols-2">{queues.data.recentDownloadFailures.map((f) => <li key={f.id} className="flex justify-between border-t border-line py-1"><span className="font-mono text-xs">{f.code ?? 'unknown'}</span><span className="text-xs text-muted">{new Date(f.at).toLocaleString()}</span></li>)}</ul>
@@ -327,7 +328,7 @@ function Audit() {
 
 function ServerSettings() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['admin', 'settings'], queryFn: () => api<{ settings: { registration_policy: 'open' | 'closed'; default_quota_bytes: number } }>('/admin/settings') });
+  const q = useQuery({ queryKey: ['admin', 'settings'], queryFn: () => api<{ settings: { registration_policy: 'open' | 'closed'; default_quota_bytes: number; torrents_enabled: boolean } }>('/admin/settings') });
   const [gb, setGb] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) => api('/admin/settings', { method: 'PATCH', body }),
@@ -342,6 +343,11 @@ function ServerSettings() {
       <Card title="Who can sign up">
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-0.5" checked={s.registration_policy === 'open'} disabled={save.isPending} onChange={(e) => save.mutate({ registration_policy: e.target.checked ? 'open' : 'closed' })} />
           <span>Anyone with a Google account can create an account<span className="block text-xs text-muted">When off, only existing users and the addresses in ADMIN_EMAILS can sign in.</span></span></label>
+      </Card>
+      <Card title="Torrent downloads">
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-0.5" checked={s.torrents_enabled} disabled={save.isPending} onChange={(e) => save.mutate({ torrents_enabled: e.target.checked })} />
+          <span>Let users download from magnet links and .torrent files
+            <span className="block text-xs text-muted">Off by default. Turning it on makes this server connect to other people's computers, who can see its internet address and what it downloads, and who may be breaking copyright law if you let users fetch what they should not. Consider running the server behind a VPN. Peers on private networks, trackers on private networks and web seeds are never contacted.</span></span></label>
       </Card>
       <Card title="Storage quota for new users">
         <form className="flex flex-wrap items-center gap-2 text-sm" onSubmit={(e) => { e.preventDefault(); save.mutate({ default_quota_bytes: Math.round(Number(gb) * 1024 ** 3) }); }}>

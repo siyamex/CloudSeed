@@ -21,6 +21,7 @@ import { opsRoutes } from './routes/ops.js';
 import { HttpMetrics } from './metrics.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { shareRoutes } from './routes/shares.js';
+import { torrentRoutes } from './routes/torrents.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { trashRoutes } from './routes/trash.js';
 import { createVault, type Vault } from './crypto.js';
@@ -132,6 +133,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await app.register(shareRoutes(deps), { prefix: '/api/v1' });
   await app.register(mediaRoutes(deps), { prefix: '/api/v1' });
   await app.register(downloadRoutes(deps), { prefix: '/api/v1' });
+  await app.register(torrentRoutes(deps), { prefix: '/api/v1' });
   await app.register(telegramRoutes({ ...deps, vault: deps.vault ?? createVault(config) }), { prefix: '/api/v1' });
   await app.register(accountRoutes(deps), { prefix: '/api/v1' });
   await app.register(adminRoutes(deps), { prefix: '/api/v1' });

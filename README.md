@@ -8,12 +8,13 @@ All six milestones are implemented, apart from the gaps listed below. **Only wha
 
 | Implemented | Not implemented |
 |---|---|
-| Google OIDC login (auth-code + PKCE, state, nonce, JWKS signature/issuer/audience, `email_verified`) | BitTorrent/magnet downloads |
+| Google OIDC login (auth-code + PKCE, state, nonce, JWKS signature/issuer/audience, `email_verified`) | BitTorrent v2 / hybrid-only torrents, uTP, WebRTC peers, https trackers, seeding after completion |
 | Server-side sessions, CSRF + Origin checks, rate limiting, RBAC roles, audit log | Sharing of several unrelated items in one link (a link is one file or one folder) |
 | Folders and files: streamed upload, Range download, rename, move, delete, search, filter, sort, pagination, trash with retention | Two-factor authentication (sign-in is whatever Google enforces) |
 | Per-user quota with atomic enforcement; max file size | Antivirus scanning of uploads and downloads |
 | Local filesystem and S3-compatible storage, plus a verified local → S3 migration tool | Authenticated download sources (by design) |
 | Remote HTTP/HTTPS downloads: Postgres-backed queue, separate worker, pause/resume/cancel/retry, priorities, Range resume, SHA-256 check, backoff, crash recovery, live progress, SSRF protection, per-user limits | Notifications to anything except the app, email and Telegram (no push, SMS or webhooks) |
+| **Torrents**: magnet links and .torrent files, file selection, pause/resume/cancel, quota-checked import (off by default; peers, trackers and web seeds on private networks are never contacted) | |
 | Telegram via the official Bot API: encrypted bot tokens, real permission checks, albums, captions, oversize files as numbered parts **or** as an expiring download link, flood-limit pacing, no-duplicate rule for unknown deliveries, history | Media: adaptive/live streaming, image-based subtitles, choosing an audio track in the browser, hardware-accelerated conversion |
 | Media library: FFmpeg indexing, thumbnails, subtitles, Range streaming, resume, optional conversion to MP4/AAC | Redis (deliberately not used: the queue lives in PostgreSQL) |
 | **Sharing** of files **and folders** (browse, download single files, or the whole folder as a ZIP): hash-only tokens, always-expiring links, optional password, download limits, public or sign-in-only, revoke, abuse reports | Per-link access logs beyond counts and last access |
@@ -98,6 +99,22 @@ Not supported by design: scraping pages, DRM circumvention, or sources needing c
 ### Tuning for a small VPS (1–2 GB RAM)
 
 `DOWNLOAD_GLOBAL_CONCURRENCY=2`, `DOWNLOAD_USER_CONCURRENCY=1`, `WORKER_CONCURRENCY=2`, `DB_POOL_MAX=5`, and set `DOWNLOAD_BANDWIDTH_LIMIT_BPS` if downloads starve other traffic. Disk is the real limit: partial files live in the `downloads` volume and a finished file is briefly present in both the workspace and storage. Keep free space of at least your largest allowed file (`MAX_FILE_SIZE_BYTES`) times the global concurrency.
+
+## Torrents
+
+Add a **magnet link** or upload a **.torrent file** on the *Torrents* page. For a magnet link the server first looks up the file list (up to 2 minutes), then you tick the files you want and where they go, or you can say "download everything" up front. The files are downloaded to a scratch folder, checked against your quota and file-size limit, copied into your storage keeping the torrent's folder layout, and the scratch data is deleted. Pause, resume, cancel, retry and live progress (peers, speed) work as for normal downloads.
+
+**It is off by default**, and you should think before turning it on (`TORRENT_ENABLED=true`, or the switch in **Administration > Settings**, which takes effect immediately):
+
+- **Peers can see your server.** BitTorrent works by connecting to strangers. They see this server's internet address and which torrent it is fetching. A VPN on the server is a reasonable precaution. Many countries treat downloading copyrighted material this way as infringement, and as the operator you may be responsible for what your users fetch.
+- **A torrent is a list of addresses chosen by whoever made it**, which is a classic way to make a server probe its own network. So: peers on private, loopback, link-local and other reserved ranges are never contacted; every tracker is looked up by CloudSeed first and used only if every address is public (and then contacted by that checked address, so DNS tricks cannot swap it); web seeds (HTTP servers named inside a torrent) are switched off; local-network peer discovery and router port-mapping (UPnP/NAT-PMP) are off; the file names inside a torrent are sanitised and every file is checked to be inside its scratch folder before it is copied. `TORRENT_ALLOWED_CIDRS` can open a specific private network for a lab; leave it empty.
+- **Limits:** at most `TORRENT_CONCURRENCY` (2) running at once, `TORRENT_MAX_ACTIVE_PER_USER` (10) per person, `TORRENT_MAX_FILES` (2000) per torrent, the quota and the maximum file size apply before anything is downloaded, a download with no progress for `TORRENT_STALL_MINUTES` (30) is given up on, and uploads to the swarm are capped at `TORRENT_UPLOAD_LIMIT_BPS` (1 MiB/s) in total.
+- **No seeding.** A torrent stops sharing the moment it finishes. During the download peers still take some data from you (BitTorrent expects it); that is what the upload cap controls.
+- **Disk space:** a download needs the selected size free in `TORRENT_WORKDIR` (default `<DOWNLOAD_WORKDIR>/torrents`), and the finished files then also use your storage until the scratch copy is deleted, so plan for about twice the size at the peak.
+- **Not supported:** BitTorrent v2-only torrents, uTP, WebRTC peers and `https`/`wss` trackers (only `http` and `udp` trackers are used).
+- **Tested against a real BitTorrent peer on localhost** (a second client seeding to the first, with a real download, pause, resume, cancel, and every safety rule above), **but never against the public BitTorrent network**: DHT, public trackers and real-world swarms are untested. Expect rough edges there, such as magnet links whose metadata never arrives.
+- **Native component:** the BitTorrent library ships a native WebRTC module. If it cannot be installed for your platform (it is built from prebuilt downloads, which may be missing for some ARM or musl systems), the rest of CloudSeed works and torrents report "unavailable" instead of crashing. The Docker image falls back to installing without it.
+- **A known, accepted audit finding.** `npm audit` reports the `ip` package (via the BitTorrent library) for a flaw in its `isPublic()` function. CloudSeed does not call that function, and the package is used only by tracker-*server* code that never runs here, so `scripts/audit.mjs` accepts it explicitly until 2027-04-30, when the build fails again so it gets re-checked.
 
 ## Telegram
 

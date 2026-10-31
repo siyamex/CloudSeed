@@ -26,7 +26,7 @@ export const opsRoutes = (deps: Deps, metrics: HttpMetrics): FastifyPluginAsync 
       return reply.status(401).header('www-authenticate', 'Bearer').send({ error: { code: 'unauthorized', message: 'A valid bearer token is required', requestId: req.id } });
     }
     const rows = async (sql: string): Promise<[string, number][]> => (await db.query<{ k: string; n: number }>(sql)).rows.map((r) => [r.k, Number(r.n)]);
-    const [users, files, used, quota, shares, reports, dl, tg, md, workers] = await Promise.all([
+    const [users, files, used, quota, shares, reports, dl, tg, tor, md, workers] = await Promise.all([
       rows(`SELECT status AS k, count(*)::int AS n FROM users WHERE status <> 'deleted' GROUP BY status`),
       rows(`SELECT 'all' AS k, count(*)::int AS n FROM files WHERE deleted_at IS NULL`),
       rows(`SELECT 'all' AS k, COALESCE(sum(used_bytes),0)::bigint AS n FROM storage_quotas`),
@@ -35,6 +35,7 @@ export const opsRoutes = (deps: Deps, metrics: HttpMetrics): FastifyPluginAsync 
       rows(`SELECT 'open' AS k, count(*)::int AS n FROM abuse_reports WHERE status = 'open'`),
       rows(`SELECT state AS k, count(*)::int AS n FROM download_jobs GROUP BY state`),
       rows(`SELECT state AS k, count(*)::int AS n FROM telegram_transfers GROUP BY state`),
+      rows(`SELECT state AS k, count(*)::int AS n FROM torrent_jobs GROUP BY state`),
       rows(`SELECT status AS k, count(*)::int AS n FROM media_assets GROUP BY status`),
       rows(`SELECT role AS k, count(*)::int AS n FROM worker_heartbeats WHERE last_seen_at > now() - interval '60 seconds' GROUP BY role`),
     ]);
@@ -48,6 +49,7 @@ export const opsRoutes = (deps: Deps, metrics: HttpMetrics): FastifyPluginAsync 
       + gauge('cloudseed_abuse_reports_open', 'Abuse reports waiting for review.', null, reports.map((r) => ['', r[1]]))
       + gauge('cloudseed_download_jobs', 'Download jobs by state.', 'state', dl)
       + gauge('cloudseed_telegram_transfers', 'Telegram transfers by state.', 'state', tg)
+      + gauge('cloudseed_torrent_jobs', 'Torrent jobs by state.', 'state', tor)
       + gauge('cloudseed_media_assets', 'Derived media assets by state.', 'status', md)
       + gauge('cloudseed_backup_last_success_timestamp_seconds', 'Unix time of the last successful, verified backup (0 = never).', null, backupTs.map((r) => ['', r[1]]))
       + gauge('cloudseed_workers_alive', 'Worker processes that sent a heartbeat in the last minute.', 'role', workers);

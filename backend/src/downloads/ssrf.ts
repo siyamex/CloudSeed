@@ -37,6 +37,21 @@ export function parseCidrs(list: string): BlockList {
   return allow;
 }
 
+/** The same "is this address allowed" rule the guard uses, for code that is handed raw addresses (such as torrent peers). */
+export function createIpPolicy(allowedCidrs = ''): { isBlocked(ip: string): boolean } {
+  const allow = parseCidrs(allowedCidrs);
+  return {
+    isBlocked(raw: string): boolean {
+      const ip = raw.replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '');
+      const fam = isIP(ip);
+      if (!fam) return true; // unparseable -> refuse
+      const type = fam === 4 ? 'ipv4' : 'ipv6';
+      if (allow.check(ip, type)) return false;
+      return blocked.check(ip, type);
+    },
+  };
+}
+
 export interface Guard {
   /** Syntactic + literal-IP validation. Throws BlockedDestinationError / TypeError. */
   assertUrl(raw: string | URL): URL;

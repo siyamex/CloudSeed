@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cloud, Download, Film, Link2, FolderOpen, Send, LayoutDashboard, LogOut, Menu, Moon, Settings as SettingsIcon, ShieldCheck, Sun, Trash2, X } from 'lucide-react';
+import { Cloud, Download, Film, Magnet, Link2, FolderOpen, Send, LayoutDashboard, LogOut, Menu, Moon, Settings as SettingsIcon, ShieldCheck, Sun, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ApiError, api, setCsrf, type Me } from './api';
@@ -15,6 +15,7 @@ import { PublicShare } from './pages/PublicShare';
 import { Settings } from './pages/Settings';
 import { Shares } from './pages/Shares';
 import { Telegram } from './pages/Telegram';
+import { Torrents } from './pages/Torrents';
 import { Trash } from './pages/Trash';
 
 function useTheme() {
@@ -35,6 +36,7 @@ const NAV = [
   { to: '/files', label: 'My Files', icon: FolderOpen, end: false },
   { to: '/media', label: 'Media Library', icon: Film, end: false },
   { to: '/downloads', label: 'Downloads', icon: Download, end: false },
+  { to: '/torrents', label: 'Torrents', icon: Magnet, end: false },
   { to: '/telegram', label: 'Telegram', icon: Send, end: false },
   { to: '/shares', label: 'Shared Links', icon: Link2, end: false },
   { to: '/trash', label: 'Trash', icon: Trash2, end: false },
@@ -111,6 +113,7 @@ function AuthedApp() {
             <Route path="/media" element={<Media />} />
             <Route path="/media/:id" element={<Player />} />
             <Route path="/downloads" element={<Downloads />} />
+            <Route path="/torrents" element={<Torrents />} />
             <Route path="/telegram" element={<Telegram />} />
             <Route path="/shares" element={<Shares />} />
             <Route path="/trash" element={<Trash />} />

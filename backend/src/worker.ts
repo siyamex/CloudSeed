@@ -8,6 +8,7 @@ import { createGuard } from './downloads/ssrf.js';
 import { createMailer } from './mail/mailer.js';
 import { MaintenanceEngine } from './maintenance/engine.js';
 import { MediaEngine } from './media/engine.js';
+import { TorrentEngine } from './torrents/engine.js';
 import { createStorages } from './storage/index.js';
 import { TelegramEngine } from './telegram/engine.js';
 
@@ -31,6 +32,9 @@ const media = config.MEDIA_ENABLED
   ? new MediaEngine({ db, config, storage, adapterFor, log, aliveFile: `${process.env.WORKER_ALIVE_FILE || '/tmp/worker-alive'}-media` })
   : null;
 media?.start();
+// Always created, idle until torrents are switched on (environment or Administration > Settings); the BitTorrent library only loads when a job needs it.
+const torrents = new TorrentEngine({ db, config, storage, adapterFor, log, aliveFile: `${process.env.WORKER_ALIVE_FILE || '/tmp/worker-alive'}-torrents` });
+torrents.start();
 const mailer = createMailer(config);
 const maintenance = new MaintenanceEngine({ db, config, mailer, log, adapterFor, vault: createVault(config), role: 'worker', aliveFile: `${process.env.WORKER_ALIVE_FILE || '/tmp/worker-alive'}-maintenance` });
 maintenance.start();
@@ -42,7 +46,7 @@ const shutdown = async (sig: string) => {
   if (closing) return;
   closing = true;
   log.info({ sig }, 'worker shutting down');
-  await Promise.all([engine.stop(), telegram?.stop(), media?.stop(), maintenance.stop()]);
+  await Promise.all([engine.stop(), telegram?.stop(), media?.stop(), torrents.stop(), maintenance.stop()]);
   mailer.close();
   await db.close();
   process.exit(0);

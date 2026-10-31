@@ -178,7 +178,7 @@ describe('settings', () => {
   it('changes the registration policy and default quota at run time', async () => {
     expect((await call(admin, 'GET', '/admin/settings')).json().settings).toMatchObject({ registration_policy: 'open' });
     const r = await call(admin, 'PATCH', '/admin/settings', { registration_policy: 'closed', default_quota_bytes: 4242 });
-    expect(r.json().settings).toEqual({ registration_policy: 'closed', default_quota_bytes: 4242 });
+    expect(r.json().settings).toMatchObject({ registration_policy: 'closed', default_quota_bytes: 4242 });
     // closed: a new person is turned away, an administrator still gets in
     const url = (await t.app.inject({ method: 'GET', url: '/api/v1/auth/google/login' }));
     expect(url.statusCode).toBeLessThan(400);

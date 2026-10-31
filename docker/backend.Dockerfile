@@ -4,7 +4,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
-RUN npm ci --workspace backend --include-workspace-root
+# The BitTorrent library has a native WebRTC part. If it cannot be installed for this platform, install without it: the app then
+# starts normally and only torrents report "unavailable" (the engine loads the library lazily and handles the failure).
+RUN npm ci --workspace backend --include-workspace-root \n || (echo 'WARNING: a native module failed to install; torrents will be unavailable in this image' && npm ci --workspace backend --include-workspace-root --ignore-scripts)
 COPY backend backend
 RUN npm -w backend run build && npm prune --omit=dev --workspace backend
 

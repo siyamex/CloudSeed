@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAdmin, type Deps } from '../app.js';
 import { HttpError } from '../errors.js';
 import { passphraseConfigured } from '../backup/scheduler.js';
+import { torrentsEnabled } from '../torrents/enabled.js';
 
 const uuid = z.string().uuid();
 const page = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) });
@@ -11,6 +12,7 @@ const page = z.object({ limit: z.coerce.number().int().min(1).max(200).default(5
 export const SETTINGS = {
   registration_policy: z.enum(['open', 'closed']),
   default_quota_bytes: z.number().int().min(0),
+  torrents_enabled: z.boolean(),
 } as const;
 type SettingKey = keyof typeof SETTINGS;
 
@@ -26,6 +28,7 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
     return {
       registration_policy: (m.get('registration_policy') as string | undefined) ?? config.REGISTRATION_POLICY,
       default_quota_bytes: Number(m.get('default_quota_bytes') ?? config.DEFAULT_USER_QUOTA_BYTES),
+      torrents_enabled: typeof m.get('torrents_enabled') === 'boolean' ? (m.get('torrents_enabled') as boolean) : config.TORRENT_ENABLED,
     };
   }
 
@@ -48,7 +51,7 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
         ...backupConfig(), lastSuccessAt: lastBackup?.finished_at ?? null, lastVerified: lastBackup?.verified ?? null,
         lastFailureAt: lastFailed && (!lastBackup || new Date(lastFailed.finished_at) > new Date(lastBackup.finished_at)) ? lastFailed.finished_at : null,
       },
-      features: { email: config.SMTP_HOST !== '', sharing: config.SHARING_ENABLED, telegram: config.TELEGRAM_ENABLED, media: config.MEDIA_ENABLED, metrics: config.METRICS_TOKEN !== '' },
+      features: { email: config.SMTP_HOST !== '', torrents: await torrentsEnabled(db, config), sharing: config.SHARING_ENABLED, telegram: config.TELEGRAM_ENABLED, media: config.MEDIA_ENABLED, metrics: config.METRICS_TOKEN !== '' },
     };
   });
 
@@ -147,7 +150,7 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
   // ------------------------------------------------------------------ queues and workers
   /** Operational numbers only. Administrators see job states and error codes, never users' URLs or file names. */
   app.get('/admin/queues', async () => {
-    const [dl, tg, md] = await Promise.all([
+    const [dl, tg, md, tr] = await Promise.all([
       db.query<{ state: string; n: number; oldest: number | null; stuck: number }>(
         `SELECT state, count(*)::int AS n, extract(epoch FROM now() - min(created_at))::int AS oldest,
                 count(*) FILTER (WHERE lease_expires_at < now())::int AS stuck
@@ -158,6 +161,9 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
       db.query<{ status: string; n: number; oldest: number | null }>(
         `SELECT status, count(*)::int AS n, extract(epoch FROM now() - min(created_at))::int AS oldest FROM media_assets
           WHERE status IN ('queued','processing','failed') GROUP BY status ORDER BY status`),
+      db.query<{ state: string; n: number; oldest: number | null }>(
+        `SELECT state, count(*)::int AS n, extract(epoch FROM now() - min(created_at))::int AS oldest FROM torrent_jobs
+          WHERE state IN ('pending','metadata','awaiting_selection','queued','downloading','paused','importing') OR finished_at > now() - interval '1 day' GROUP BY state ORDER BY state`),
     ]);
     const failures = (await db.query<{ id: string; error_code: string | null; finished_at: string }>(
       `SELECT id, error_code, finished_at FROM download_jobs WHERE state = 'failed' ORDER BY finished_at DESC NULLS LAST LIMIT 20`)).rows;
@@ -165,6 +171,7 @@ export const adminRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
       downloads: dl.rows.map((r) => ({ state: r.state, count: r.n, oldestSeconds: r.oldest, expiredLeases: r.stuck })),
       telegram: tg.rows.map((r) => ({ state: r.state, count: r.n, oldestSeconds: r.oldest })),
       media: md.rows.map((r) => ({ state: r.status, count: r.n, oldestSeconds: r.oldest })),
+      torrents: tr.rows.map((r) => ({ state: r.state, count: r.n, oldestSeconds: r.oldest })),
       recentDownloadFailures: failures.map((f) => ({ id: f.id, code: f.error_code, at: f.finished_at })),
     };
   });

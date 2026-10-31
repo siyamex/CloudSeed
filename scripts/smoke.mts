@@ -13,6 +13,7 @@ import { mkdtempSync, createWriteStream, existsSync, readFileSync, statSync } fr
 import os from 'node:os';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
+import WebTorrent from 'webtorrent';
 import pg from 'pg';
 import { makeBytes, startOrigin } from '../backend/test/origin.js';
 import { startFakeTelegram } from '../backend/test/fake-telegram.js';
@@ -50,6 +51,7 @@ const env: NodeJS.ProcessEnv = {
   FFMPEG_PATH: ffmpegPath, FFPROBE_PATH: ffprobePath, MEDIA_WORKDIR: path.join(tmp, 'media'),
   ENCRYPTION_KEY: Buffer.alloc(32, 11).toString('base64'), TELEGRAM_API_BASE: telegram.url, TELEGRAM_LEASE_SECONDS: '3', TELEGRAM_CHAT_INTERVAL_MS: '0', WORKER_ALIVE_FILE: path.join(tmp, 'alive'),
   METRICS_TOKEN: 'smoke-metrics-token-1234567890',
+  TORRENT_ENABLED: 'true', TORRENT_ALLOWED_CIDRS: '127.0.0.0/8', TORRENT_DHT: 'false', TORRENT_UPLOAD_LIMIT_BPS: '0',
   BACKUP_INTERVAL_HOURS: '24', BACKUP_PASSPHRASE: 'smoke scheduled passphrase', BACKUP_DIR: path.join(tmp, 'backups'), BACKUP_KEEP: '3',
 };
 
@@ -343,6 +345,24 @@ try {
     drill.code === 0 && /RESTORE TEST PASSED/.test(drill.out) && (await admin.query(`SELECT 1 FROM pg_database WHERE datname LIKE 'cloudseed_drill_%'`)).rowCount === 0, drill.out.slice(-400));
   const again = await cli(['restore', bak, '--yes'], restoredEnv);
   check('Restore: refuses a database that already has data', again.code === 1 && /not empty/.test(again.out));
+  // ---- 10. A magnet link, through the built API and worker processes, from a real local BitTorrent peer ----
+  const torrentData = makeBytes(300_000, 42);
+  const seeder: any = new (WebTorrent as any)({ dht: false, tracker: false, lsd: false, natUpnp: false, natPmp: false, utp: false, webSeeds: false });
+  try {
+    const seeded: any = await new Promise((res) => seeder.seed(Object.assign(Buffer.from(torrentData), { name: 'smoke-torrent.bin' }), { announce: [] }, res));
+    await until(async () => seeder.torrentPort > 0, 10000, 'the local seeder');
+    const magnet = `magnet:?xt=urn:btih:${seeded.infoHash}&dn=smoke-torrent.bin&x.pe=127.0.0.1:${seeder.torrentPort}`;
+    const tr = await call('POST', '/torrents/magnet', { magnet, autoStart: true });
+    const tj = (await tr.json()) as any;
+    check('Torrents: a magnet link is accepted', tr.status === 201 && tj.state === 'pending', `status ${tr.status}`);
+    const finished = await until(async () => { const j = (await (await call('GET', `/torrents/${tj.id}`)).json()) as any; return ['completed', 'failed'].includes(j.state) && j; }, 90000, 'the torrent');
+    check('Torrents: the worker process finds the file list, downloads from the peer and imports it', finished.state === 'completed', JSON.stringify(finished.error));
+    const tf = (await admin.query(`SELECT id, size_bytes FROM files WHERE name = 'smoke-torrent.bin'`)).rows[0];
+    check('Torrents: the imported file is byte-identical', !!tf && (await bytesOf(tf.id)).equals(torrentData));
+    const pub = await call('GET', '/torrents/status');
+    check('Torrents: the status endpoint explains the exposure', ((await pub.json()) as any).notice.includes('internet address'));
+  } finally { await new Promise<void>((r) => seeder.destroy(() => r())); }
+
   await admin.end();
 } catch (e) {
   check('smoke test ran to completion', false, (e as Error).message);
