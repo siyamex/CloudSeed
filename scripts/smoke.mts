@@ -9,7 +9,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, createWriteStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
@@ -362,6 +362,55 @@ try {
     const pub = await call('GET', '/torrents/status');
     check('Torrents: the status endpoint explains the exposure', ((await pub.json()) as any).notice.includes('internet address'));
   } finally { await new Promise<void>((r) => seeder.destroy(() => r())); }
+
+  // ---- 11. A brand-new install: no secrets given, an empty database, production mode ----
+  await admin.query('CREATE DATABASE fresh_install');
+  const freshUrl = new URL(postgres.adminUrl); freshUrl.pathname = '/fresh_install';
+  const secretsDir = path.join(tmp, 'secrets-fresh');
+  const env2: NodeJS.ProcessEnv = { ...env, NODE_ENV: 'production', ALLOW_INSECURE_HTTP: 'true', SECRETS_DIR: secretsDir, DATABASE_URL: freshUrl.toString(), PORT: '18090', PUBLIC_URL: '' };
+  for (const k of ['SESSION_SECRET', 'ENCRYPTION_KEY', 'TELEGRAM_API_BASE', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'METRICS_TOKEN', 'BACKUP_INTERVAL_HOURS', 'BACKUP_PASSPHRASE']) delete env2[k];
+  const run = (script: string, args: string[] = []) => new Promise<{ code: number; out: string }>((resolve) => {
+    const c = spawn(process.execPath, [path.join(root, 'backend/dist', script), ...args], { env: env2, cwd: path.join(root, 'backend') });
+    let out = ''; c.stdout.on('data', (d) => (out += d)); c.stderr.on('data', (d) => (out += d));
+    c.on('exit', (code) => resolve({ code: code ?? -1, out }));
+  });
+  const i1 = await run('cli.js', ['init-secrets']);
+  const i2 = await run('cli.js', ['init-secrets']);
+  check('Install: init-secrets creates the secrets once and reuses them', i1.code === 0 && /session_secret: created/.test(i1.out) && /session_secret: already there/.test(i2.out), i1.out + i2.out);
+  check('Install: the generated secrets exist and are not empty', ['session_secret', 'encryption_key', 'db_password'].every((f) => existsSync(path.join(secretsDir, f)) && statSync(path.join(secretsDir, f)).size > 20), readdirSync(secretsDir).join());
+  const mg = await run('db/migrate-cli.js');
+  check('Install: the fresh database migrates with only generated secrets', mg.code === 0, mg.out.slice(-600).replace(/\s+/g, ' '));
+  const api2 = spawn(process.execPath, [path.join(root, 'backend/dist/server.js')], { env: env2, cwd: path.join(root, 'backend'), stdio: ['ignore', 'pipe', 'pipe'] });
+  procs.push(api2);
+  let log2 = ''; api2.stdout!.on('data', (d) => (log2 += d)); api2.stderr!.on('data', (d) => (log2 += d));
+  const b2 = 'http://127.0.0.1:18090/api/v1';
+  await until(async () => (await fetch(`${b2}/health`)).ok, 30000, 'the fresh API');
+  const cfg0 = (await (await fetch(`${b2}/auth/config`)).json()) as any;
+  check('Install: a fresh server asks for setup, not for a code, from its own machine', cfg0.needsSetup === true && cfg0.setupCodeRequired === false && cfg0.localLogin === false, JSON.stringify(cfg0));
+  check('Install: the setup code is printed in the server log for remote setup', /setup code: [A-Z2-9]{4}-[A-Z2-9]{4}/.test(log2));
+  const su = await fetch(`${b2}/auth/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', password: 'a long first-run passphrase 42' }) });
+  const cookie2 = (su.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
+  check('Install: setup creates the administrator and signs them in', su.status === 201 && /cs_session=/.test(cookie2), `status ${su.status} cookie ${cookie2.slice(0, 20)}`);
+  const me2 = (await (await fetch(`${b2}/auth/me`, { headers: { cookie: cookie2 } })).json()) as any;
+  check('Install: that account is an administrator with a password', me2.user?.roles?.includes('admin') && me2.user?.hasPassword === true);
+  check('Install: setup cannot be run a second time', (await fetch(`${b2}/auth/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'x@example.com', password: 'another passphrase 43 x' }) })).status === 409);
+  const lg = await fetch(`${b2}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', password: 'a long first-run passphrase 42' }) });
+  const bad = await fetch(`${b2}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', password: 'wrong' }) });
+  check('Install: password sign-in works, and a wrong password is refused', lg.status === 200 && bad.status === 401);
+  const csrf2 = me2.csrfToken as string;
+  const gcfg = await fetch(`${b2}/admin/auth/google`, { method: 'PUT', headers: { cookie: cookie2, 'x-csrf-token': csrf2, 'content-type': 'application/json' }, body: JSON.stringify({ clientId: 'smoke-1234.apps.googleusercontent.com', clientSecret: 'GOCSPX-smoke-secret-0123456789', enabled: true }) });
+  const gj = (await gcfg.json()) as any;
+  check('Install: Google can be configured from the admin panel, and the secret is not echoed', gcfg.status === 200 && gj.google?.enabled === true && !JSON.stringify(gj).includes('GOCSPX'));
+  const cfg1 = (await (await fetch(`${b2}/auth/config`)).json()) as any;
+  const go = await fetch(`${b2}/auth/google/login`, { redirect: 'manual' });
+  check('Install: Google sign-in is offered at once and redirects to Google with the saved client ID', cfg1.googleConfigured === true && go.status === 302 && /client_id=smoke-1234/.test(go.headers.get('location') ?? ''));
+  const stored = (await (async () => { const c = new pg.Client({ connectionString: freshUrl.toString() }); await c.connect(); const r = await c.query(`SELECT value FROM application_settings WHERE key = 'google_client_secret_enc'`); await c.end(); return JSON.stringify(r.rows); })());
+  check('Install: the Google secret is stored encrypted, not in the clear', !stored.includes('GOCSPX') && stored.length > 40);
+  const reset = await run('cli.js', ['reset-password', 'owner@example.com']);
+  const newPw = /New password \(shown once[^)]*\): (\S+)/.exec(reset.out)?.[1];
+  const afterReset = newPw ? await fetch(`${b2}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', password: newPw }) }) : null;
+  const stale = await fetch(`${b2}/auth/me`, { headers: { cookie: cookie2 } });
+  check('Install: the recovery command sets a working new password and signs old sessions out', reset.code === 0 && afterReset?.status === 200 && stale.status === 401, reset.out.slice(0, 200));
 
   await admin.end();
 } catch (e) {

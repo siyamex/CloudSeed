@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ApiError, api, formatBytes, formatDuration,
   type AdminAuth, type AdminOverview, type AdminQueues, type BackupConfig, type BackupRun, type AdminReport, type AdminUser, type AdminWorker, type AuditEntry,
@@ -361,7 +362,7 @@ function SignIn() {
 
       <Card title="Sign in with Google">
         <form className="space-y-3 text-sm" onSubmit={(e) => { e.preventDefault(); saveGoogle.mutate({ clientId: id.trim(), clientSecret: secret.trim() || undefined, enabled: true }); }}>
-          <p className="text-muted">{g.source === 'none' ? 'Not set up. Anyone can then only sign in with a password.' : g.source === 'environment' ? 'Set by the server\'s environment variables. Saving here overrides them.' : 'Saved here.'} {g.enabled ? <span className="text-accent">Currently on.</span> : <span>Currently off.</span>}</p>
+          <p className="text-muted">{g.source === 'none' ? 'Not set up: people can only sign in with a password for now.' : g.source === 'environment' ? 'Set by the server\'s environment variables. Saving here overrides them.' : 'Saved here.'} {g.enabled ? <span className="text-accent">Currently on.</span> : <span>Currently off.</span>}</p>
           <label className="block">Client ID<input className={`${input} mt-1 w-full`} value={id} placeholder="1234-abcd.apps.googleusercontent.com" onChange={(e) => setClientId(e.target.value)} autoComplete="off" spellCheck={false} /></label>
           <label className="block">Client secret<input className={`${input} mt-1 w-full`} type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder={g.secretSet ? 'Saved. Leave empty to keep it.' : 'GOCSPX-…'} />
             <span className="mt-1 block text-xs text-muted">Stored encrypted and never shown again.</span></label>
@@ -431,7 +432,9 @@ function ServerSettings() {
 }
 
 export function Admin({ selfId }: { selfId: string }) {
-  const [tab, setTab] = useState<Tab>('Overview');
+  const [params] = useSearchParams();
+  const wanted = (params.get('tab') ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  const [tab, setTab] = useState<Tab>(TABS.find((t) => t.toLowerCase().replace(/[^a-z]/g, '') === wanted) ?? 'Overview');
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <h1 className="text-xl font-semibold">Administration</h1>

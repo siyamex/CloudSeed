@@ -1,0 +1,91 @@
+# CloudSeed: the whole stack in one file. No settings are required.
+#
+#   docker compose up -d        then open  http://localhost:8080  and create your administrator account.
+#
+# The first start generates the secrets (session key, encryption key, database password) and keeps them in the "secrets" volume.
+# Sign-in with Google, the public address, email and everything else are set later in the web pages (Administration).
+# Optional, in a file named .env next to this one:   PORT=8080   PUBLIC_URL=https://cloud.example.com   CLOUDSEED_TAG=1.0.0
+name: cloudseed
+
+x-app: &app
+  image: siyamexcom/cloudseed-api:${CLOUDSEED_TAG:-latest}
+  restart: unless-stopped
+  environment: &env
+    NODE_ENV: production
+    # Plain http is allowed so it works on a home network straight away. The admin pages warn about it; add https in front before
+    # opening the server to the internet (a reverse proxy or a tunnel), then enter the https address under Administration > Sign-in.
+    ALLOW_INSECURE_HTTP: "true"
+    SECRETS_DIR: /secrets
+    DB_HOST: postgres
+    DB_USER: cloudseed
+    DB_NAME: cloudseed
+    PUBLIC_URL: ${PUBLIC_URL:-}
+    MIGRATIONS_DIR: /app/migrations
+    BACKUP_DIR: /backups
+
+services:
+  # Runs once before everything else: makes the secrets if they do not exist yet.
+  init:
+    <<: *app
+    restart: "no"
+    command: ["node", "dist/cli.js", "init-secrets"]
+    volumes: [secrets:/secrets]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudseed
+      POSTGRES_DB: cloudseed
+      POSTGRES_PASSWORD_FILE: /secrets/db_password
+    volumes: [pgdata:/var/lib/postgresql/data, "secrets:/secrets:ro"]
+    depends_on: { init: { condition: service_completed_successfully } }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudseed -d cloudseed"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["node", "dist/db/migrate-cli.js"]
+    volumes: ["secrets:/secrets:ro"]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  api:
+    <<: *app
+    volumes: ["secrets:/secrets:ro", storage:/data, backups:/backups]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    stop_grace_period: 30s
+
+  worker:
+    <<: *app
+    command: ["node", "dist/worker.js"]
+    volumes: ["secrets:/secrets:ro", storage:/data, downloads:/downloads, backups:/backups]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/worker-alive -mmin -1 | grep -q ."]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 30s
+
+  web:
+    image: siyamexcom/cloudseed-web:${CLOUDSEED_TAG:-latest}
+    restart: unless-stopped
+    ports: ["${PORT:-8080}:8081"]
+    depends_on: { api: { condition: service_healthy } }
+
+volumes:
+  pgdata:
+  storage:
+  downloads:
+  backups:
+  # Holds the encryption key. Back this volume up too: without it, saved Telegram bot tokens and Google settings cannot be read after a restore.
+  secrets:

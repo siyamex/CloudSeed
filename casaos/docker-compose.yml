@@ -1,54 +1,57 @@
-# CloudSeed for CasaOS.  CasaOS > App Store > "+ Custom Install" (top right) > import / paste this file.
-# BEFORE you press Install, replace every value marked CHANGE-ME below (see "Configure" in the README, section CasaOS).
+# CloudSeed for CasaOS. Nothing to edit: App Store > "+ Custom Install" > import / paste this file > Install.
+# Then open the app and create your administrator account on the first page. The secrets are generated automatically.
 name: cloudseed
 
 x-env: &env
   NODE_ENV: production
-  # The exact https address people will open, WITHOUT a trailing slash. Google sign-in does not work with a plain IP address.
-  PUBLIC_URL: https://CHANGE-ME.example.com
-  GOOGLE_CLIENT_ID: CHANGE-ME.apps.googleusercontent.com
-  GOOGLE_CLIENT_SECRET: CHANGE-ME
-  GOOGLE_REDIRECT_URI: https://CHANGE-ME.example.com/api/v1/auth/google/callback
-  ADMIN_EMAILS: CHANGE-ME@gmail.com
-  # Generate with:  openssl rand -base64 48   (any 32+ characters)
-  SESSION_SECRET: CHANGE-ME-to-a-long-random-string-of-48-characters-or-more
-  # Generate with:  openssl rand -base64 32   (must decode to exactly 32 bytes). Keep a copy: backups cannot be restored without it.
-  ENCRYPTION_KEY: CHANGE-ME-base64-of-32-random-bytes=
-  DATABASE_URL: postgres://cloudseed:CHANGE-ME-DB-PASSWORD@postgres:5432/cloudseed
-  LOCAL_STORAGE_ROOT: /data/storage
-  LOCAL_TMP_DIR: /data/tmp
-  DOWNLOAD_WORKDIR: /downloads
-  MEDIA_WORKDIR: /downloads/media
+  # Plain http is fine on a home network (the admin pages warn about it). Before opening it to the internet, put https in front
+  # (Cloudflare Tunnel, Nginx Proxy Manager, Tailscale) and enter that address in the app under Administration > Sign-in.
+  ALLOW_INSECURE_HTTP: "true"
+  SECRETS_DIR: /secrets
+  DB_HOST: postgres
+  DB_USER: cloudseed
+  DB_NAME: cloudseed
   MIGRATIONS_DIR: /app/migrations
-  # Automatic encrypted backups every 24 hours into /DATA/AppData/cloudseed/backups. Choose a passphrase of 12+ characters and keep a copy elsewhere:
-  # without it the backups cannot be opened. Set BACKUP_INTERVAL_HOURS to 0 to turn the schedule off.
-  BACKUP_INTERVAL_HOURS: "24"
   BACKUP_DIR: /backups
-  BACKUP_KEEP: "7"
-  BACKUP_PASSPHRASE: CHANGE-ME-backup-passphrase
 
 services:
+  init:
+    image: siyamexcom/cloudseed-api:latest
+    container_name: cloudseed-init
+    command: ["node", "dist/cli.js", "init-secrets"]
+    environment: *env
+    user: "0:0"   # CasaOS creates its folders as root, so the app must be allowed to write to them
+    volumes:
+      - /DATA/AppData/$AppID/secrets:/secrets
+    restart: "no"
+
   postgres:
     image: postgres:17-alpine
     container_name: cloudseed-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: cloudseed
-      POSTGRES_PASSWORD: CHANGE-ME-DB-PASSWORD   # must match the password inside DATABASE_URL above
       POSTGRES_DB: cloudseed
+      POSTGRES_PASSWORD_FILE: /secrets/db_password
     volumes:
       - /DATA/AppData/$AppID/pgdata:/var/lib/postgresql/data
+      - /DATA/AppData/$AppID/secrets:/secrets:ro
+    depends_on:
+      init: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cloudseed -d cloudseed"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   migrate:
     image: siyamexcom/cloudseed-api:latest
     container_name: cloudseed-migrate
     command: ["node", "dist/db/migrate-cli.js"]
     environment: *env
+    user: "0:0"
+    volumes:
+      - /DATA/AppData/$AppID/secrets:/secrets:ro
     depends_on:
       postgres: { condition: service_healthy }
     restart: "no"
@@ -57,11 +60,12 @@ services:
     image: siyamexcom/cloudseed-api:latest
     container_name: cloudseed-api
     restart: unless-stopped
-    # CasaOS creates the folders under /DATA/AppData as root, so the app must be allowed to write to them.
-    user: "0:0"
     environment: *env
+    user: "0:0"
     volumes:
+      - /DATA/AppData/$AppID/secrets:/secrets:ro
       - /DATA/AppData/$AppID/storage:/data
+      - /DATA/AppData/$AppID/backups:/backups
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
@@ -71,10 +75,11 @@ services:
     image: siyamexcom/cloudseed-api:latest
     container_name: cloudseed-worker
     restart: unless-stopped
-    user: "0:0"
     command: ["node", "dist/worker.js"]
     environment: *env
+    user: "0:0"
     volumes:
+      - /DATA/AppData/$AppID/secrets:/secrets:ro
       - /DATA/AppData/$AppID/storage:/data
       - /DATA/AppData/$AppID/downloads:/downloads
       - /DATA/AppData/$AppID/backups:/backups
@@ -83,22 +88,22 @@ services:
       migrate: { condition: service_completed_successfully }
     stop_grace_period: 30s
 
-  frontend:
+  web:
     image: siyamexcom/cloudseed-web:latest
     container_name: cloudseed-web
     restart: unless-stopped
     ports:
-      - "8089:8081"      # open http://<casaos-ip>:8089 on your network; put your https reverse proxy / tunnel in front of this port
+      - "8089:8081"      # open http://<casaos-ip>:8089
     depends_on:
       api: { condition: service_healthy }
 
 x-casaos:
   architectures: [amd64, arm64]
-  main: frontend
+  main: web
   author: siyamex
   category: Cloud
   description:
-    en_us: Self-hosted cloud file manager with Google sign-in, a remote download engine, Telegram delivery, media streaming and secure sharing.
+    en_us: Self-hosted cloud file manager with a download engine, torrents, Telegram delivery, media streaming and secure sharing.
   tagline:
     en_us: Your own cloud for files, downloads and media
   title:

@@ -5,6 +5,7 @@ import { checkPassphrase, createBackup, restoreBackup, verifyBackup } from './ba
 import { restoreDrill } from './backup/drill.js';
 import { randomBytes } from 'node:crypto';
 import { checkPasswordPolicy, setPassword } from './auth/local.js';
+import { SECRET_FILES, ensureSecret, type SecretName } from './secrets.js';
 import { loadConfig } from './config.js';
 import { createPgDb } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -21,6 +22,7 @@ const USAGE = `CloudSeed command line tools
   cli reconcile [--delete-orphans] [--fix-quotas] [--grace-hours 24] [--json]
                                                         Compare the database with storage; exits 1 if anything is off
   cli migrate-storage --from local --to s3 [--dry-run] [--delete-originals]
+  cli init-secrets                                      Create the session secret, encryption key and database password in SECRETS_DIR if missing
   cli create-admin <email>                              Create an administrator (or give an existing user a password and admin rights)
   cli reset-password <email>                            Set a new password for a locked-out account (prints a random one unless NEW_PASSWORD is set)
   cli migrate                                           Apply database migrations
@@ -47,6 +49,13 @@ async function main(argv: string[]): Promise<number> {
       from: { type: 'string' }, to: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'delete-originals': { type: 'boolean' },
     },
   });
+
+  if (cmd === 'init-secrets') {
+    const dir = process.env.SECRETS_DIR?.trim();
+    if (!dir) throw new Error('Set SECRETS_DIR to the folder where the generated secrets should be kept.');
+    for (const name of Object.keys(SECRET_FILES) as SecretName[]) say(`${name}: ${ensureSecret(dir, name).created ? 'created' : 'already there'}`);
+    return 0;
+  }
 
   if (cmd === 'verify') {
     const file = positionals[0];

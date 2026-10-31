@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolveSecrets } from './secrets.js';
 
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 
@@ -193,7 +194,8 @@ export function deriveCookieSecure(c: Pick<z.infer<typeof schema>, 'COOKIE_SECUR
   return c.NODE_ENV === 'production';
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): Config {
+  const env = resolveSecrets(rawEnv); // fills in generated or file-based secrets when SECRETS_DIR / *_FILE are used
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const msg = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');

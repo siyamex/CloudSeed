@@ -19,7 +19,8 @@ All six milestones are implemented, apart from the gaps listed below. **Only wha
 | Media library: FFmpeg indexing, thumbnails, subtitles, Range streaming, resume, optional conversion to MP4/AAC | Redis (deliberately not used: the queue lives in PostgreSQL) |
 | **Sharing** of files **and folders** (browse, download single files, or the whole folder as a ZIP): hash-only tokens, always-expiring links, optional password, download limits, public or sign-in-only, revoke, abuse reports | Per-link access logs beyond counts and last access |
 | **Notifications**: in-app bell, per-kind muting, optional email over SMTP and optional posting to your own Telegram chat, each with retry and a per-user hourly cap; quota, expiring-link and backup warnings | Native mobile apps, background upload queues, receiving files shared from other phone apps |
-| **Account**: settings, active sessions with revoke, JSON data export, account deletion | |
+| **Account**: settings, password change, active sessions with revoke, JSON data export, account deletion | |
+| **First-run setup** in the browser, **root-admin password login** (lockout, recovery command), **Google sign-in configurable from the admin pages**, public address setting, **one-file Docker install** with generated secrets | |
 | **Administration**: users (disable, roles, quota), abuse review, queue and worker health, audit log, runtime settings, `/health/ready`, Prometheus `/metrics` | |
 | **Backups**: encrypted, snapshot-consistent; scheduled by the worker with retention and read-back verification; admin page and alerts; restore, restore test, reconcile, storage migration (command line) | Copying backups off the machine (you do that), restoring from the web UI |
 | **Installable app (PWA)**: manifest, icons, offline-capable app shell | |
@@ -27,15 +28,26 @@ All six milestones are implemented, apart from the gaps listed below. **Only wha
 
 ## Quick start (Docker)
 
+One command, nothing to fill in:
+
 ```bash
-cp .env.example .env
-# edit .env: set POSTGRES_PASSWORD, SESSION_SECRET, GOOGLE_* and ADMIN_EMAILS
-docker compose up --build -d
+curl -fsSL https://raw.githubusercontent.com/siyamex/CloudSeed/main/install/install.sh | sh
 ```
 
-Open http://localhost:8080. The `migrate` service applies migrations before the API starts. Check with `docker compose ps` and `docker compose logs api`.
+On Windows (Docker Desktop), in PowerShell: `irm https://raw.githubusercontent.com/siyamex/CloudSeed/main/install/install.ps1 | iex`
 
-Without Google credentials the app runs but the login page shows a clear "not configured" state.
+Or by hand: download [`install/docker-compose.yml`](install/docker-compose.yml) into an empty folder and run `docker compose up -d`.
+
+Then open **http://localhost:8080**. The first page asks you to **create the administrator account** (email and password); that is the only setup. The server makes its own secrets on first start (session key, encryption key, database password) and keeps them in the `secrets` volume, so there is no `.env` to write and no key to invent. Everything else (Google sign-in, the public address, email, torrents, backups) is set later in the web pages under **Administration**.
+
+- **From another computer or phone on your network** use `http://<server-ip>:8080`. From the same network no code is needed to finish setup. If you reach a brand-new server from *outside* (for example through a tunnel), setup asks for a code that is printed in the server log: `docker compose logs api | grep "setup code"`. That stops a stranger who finds a fresh server first from becoming its administrator.
+- **It starts on plain http** so it works at home straight away, and the admin pages say so. Before you open it to the internet put https in front of it (Cloudflare Tunnel, Nginx Proxy Manager, Caddy, Tailscale) and enter that address under **Administration > Sign-in > Public address**.
+- **Optional settings**, in a `.env` file next to the compose file: `PORT=8080`, `PUBLIC_URL=https://cloud.example.com`, `CLOUDSEED_TAG=1.0.0` (pin a release).
+- **Back up the `secrets` volume** as well as your data. It holds the encryption key; without it, saved Telegram bot tokens and Google settings cannot be read after a restore.
+- **Lost the administrator password?** On the server: `docker compose exec api node dist/cli.js reset-password you@example.com` (prints a new random one).
+- **Not tested here:** these Docker files and scripts have not been run on a machine with Docker (the development machine has none). The images build and are scanned in CI, and the app itself is tested thoroughly, but expect to report small problems on first use.
+
+Building from source instead: see "Development without Docker" below, or `compose.yaml` (builds the images from this repository and reads a `.env`).
 
 ## Try it on your computer, without Docker
 
@@ -51,17 +63,13 @@ Then open http://localhost:5199 and click **Sign in as the local test user**. Th
 
 To keep your data without Docker, install PostgreSQL 15 or newer, create a database, copy `.env.example` to `.env`, set `DATABASE_URL` and either the `GOOGLE_*` values or `DEV_LOGIN=true` (development only), then run `npm run dev:backend`, `npm run dev:worker` and `npm -w frontend run dev` in three terminals and open http://localhost:5173.
 
-## Google sign-in setup
+## Google sign-in (optional)
 
-1. Google Cloud Console → create/select a project → **APIs & Services → OAuth consent screen**. Choose *External* (or *Internal* for Workspace), fill in app name and support email. Scopes: only `openid`, `email`, `profile` (CloudSeed requests nothing else; no Drive or Gmail access).
-2. **Credentials → Create credentials → OAuth client ID → Web application**.
-3. **Authorized JavaScript origins:** your `PUBLIC_URL` (e.g. `http://localhost:8080`).
-4. **Authorized redirect URIs:** exactly `GOOGLE_REDIRECT_URI`, i.e. `<PUBLIC_URL>/api/v1/auth/google/callback`.
-5. Put the client ID/secret in `.env`. The secret is only ever read by the API.
-6. While the consent screen is in *Testing*, add your Google accounts as test users.
-7. **Production requires HTTPS.** Google only allows plain `http` for `localhost`, and the API refuses to start in production with an `http://` `PUBLIC_URL`.
+The administrator signs in with the email and password chosen during setup. To let other people sign in with their Google accounts, set Google up in the web pages: **Administration > Sign-in**. Paste the client ID and client secret from Google and press *Save and turn on*; the page shows the exact redirect address to register in Google's console, has a *Check settings* button, and lists the steps. The secret is stored encrypted and is never displayed again. No restart is needed, and password sign-in keeps working even if Google is switched off or misconfigured.
 
-`ADMIN_EMAILS` lists emails that become administrators on their first verified sign-in. `REGISTRATION_POLICY=closed` lets only those emails register. A Google identity is keyed on its `sub`; a new identity is **never** auto-linked to an existing account by email.
+Google only accepts plain `http` redirect addresses for `localhost`; for any other address you need an https address (set it under *Public address* on the same page).
+
+Environment variables (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`) still work for people who prefer them; anything saved in the admin pages takes priority. `ADMIN_EMAILS` still makes a Google account an administrator the first time it signs in.
 
 ## Storage
 
@@ -294,13 +302,13 @@ docker compose --profile tools run --rm cli verify /backups/cloudseed-2025-01-01
 - **Consistent.** The database is read in a single `REPEATABLE READ` transaction, so every table reflects one instant even while the app runs. Objects created afterwards are not referenced by it; objects deleted meanwhile are reported as missing instead of silently skipped.
 - **Encrypted and tamper-evident.** AES-256-GCM in 1 MiB frames with the key derived from your passphrase (scrypt, fresh salt per file). Wrong passphrase, flipped bits, dropped, reordered or appended frames and truncated files are all detected; nothing readable (names, emails, table names) appears in the file.
 - **Honest.** The summary lists objects that were missing from storage or no longer matched their recorded SHA-256 when the backup was made; `--strict` turns those into a failing exit code. `--no-objects` backs up the database only and says so.
-- **What it does *not* contain:** `ENCRYPTION_KEY` and `SESSION_SECRET`. **Keep `ENCRYPTION_KEY` safe, separately.** Without it, saved Telegram bot tokens cannot be decrypted after a restore (users reconnect their bots).
+- **What it does *not* contain:** the encryption key and session secret (the `secrets` volume, or `ENCRYPTION_KEY` and `SESSION_SECRET` in your `.env`). **Keep `ENCRYPTION_KEY` safe, separately.** Without it, saved Telegram bot tokens cannot be decrypted after a restore (users reconnect their bots).
 - **Restore** goes into a *fresh, migrated, empty* database of the *same schema version* and is atomic: the archive is verified first, then rows and objects are loaded in one transaction and everything (objects included) is rolled back on any failure. It refuses a non-empty target or a different version. Sequences are reset afterwards.
 
 ```bash
 docker compose up -d postgres
 docker compose --profile tools run --rm -e BACKUP_PASSPHRASE cli restore /backups/cloudseed-2025-01-01.csbk --yes
-docker compose up -d        # with the SAME .env (ENCRYPTION_KEY!)
+docker compose up -d        # with the SAME secrets (the `secrets` volume, or your .env)
 docker compose --profile tools run --rm cli reconcile
 ```
 
@@ -326,25 +334,25 @@ The repository needs two secrets before the first run: `DOCKERHUB_USERNAME` and 
 
 ## CasaOS (and other home servers)
 
-CasaOS runs Docker Compose files, so CloudSeed installs from the published images with no build step. `casaos/docker-compose.yml` is a ready-made, self-contained file (PostgreSQL, migrations, API, worker, web UI).
+CasaOS runs Docker Compose files, so CloudSeed installs from the published images with no build step and **no values to edit**:
 
-1. **You need an https address.** Google sign-in refuses plain `http://192.168.x.x` addresses, and the app refuses to start in production mode without https. Use a domain you control with a Cloudflare Tunnel, Tailscale Funnel/Serve with a certificate, or Nginx Proxy Manager (also in the CasaOS app store) pointing at CasaOS port **8089**. Forward `X-Forwarded-Proto: https`.
-2. **Create Google credentials** (see *Google sign-in setup*). The redirect URI is `https://your-domain/api/v1/auth/google/callback`.
-3. **Generate two secrets** on any machine: `openssl rand -base64 48` (SESSION_SECRET) and `openssl rand -base64 32` (ENCRYPTION_KEY). Save a copy of the second one somewhere safe.
-4. In CasaOS choose **App Store > Custom Install (top right) > Import**, paste `casaos/docker-compose.yml`, and replace every `CHANGE-ME` (domain, Google ID and secret, your email in `ADMIN_EMAILS`, the two secrets, the backup passphrase, and the database password, which appears twice and must match). Install.
-5. Open your https address and sign in with the Google account listed in `ADMIN_EMAILS`: that account becomes the administrator.
+1. In CasaOS choose **App Store > Custom Install (top right) > Import**, paste the contents of [`casaos/docker-compose.yml`](casaos/docker-compose.yml) and press Install (the first start downloads the images, which takes a few minutes on a small board).
+2. Open `http://<casaos-ip>:8089` and create the administrator account on the first page.
+3. For access from outside the house, put https in front of port 8089 (Cloudflare Tunnel, Nginx Proxy Manager, Tailscale) and enter that address under **Administration > Sign-in**. Google sign-in, if you want it, is set up on the same page.
 
-Data lives under `/DATA/AppData/cloudseed/` (`pgdata`, `storage`, `downloads`). Back up with the CLI: `docker exec -e BACKUP_PASSPHRASE='...' cloudseed-api node dist/cli.js backup --out /data/backup.csbk`, then copy the file off the machine. To update, pull the new image in CasaOS (or `docker compose pull && up -d`); migrations run automatically.
+Data lives under `/DATA/AppData/cloudseed/` (`pgdata`, `storage`, `downloads`, `backups`, `secrets`). Turn on automatic backups by setting `BACKUP_INTERVAL_HOURS` (see *Backup*) and copy the backup files and the `secrets` folder off the machine. To update, pull the new image in CasaOS (or `docker compose pull && up -d`); migrations run automatically.
 
-> **Not tested on CasaOS.** The file is valid Compose, but I have not installed it on a CasaOS machine. CasaOS's import screen can be picky about extensions; if it rejects `x-casaos`, delete that block at the bottom (the app then installs without the icon and title).
+> **Not tested on CasaOS.** The file is valid Compose, but I have not installed it on a CasaOS machine. If its import screen rejects the `x-casaos` block at the bottom, delete that block; the app then installs without the icon and title.
 
-## Production
+## Production (building from source)
+
+The one-file install above is the simplest way. This is the stricter variant for operators who want to build the images themselves, keep secrets in `.env`, and require https:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml up --build -d
 ```
 
-- The API validates its configuration on boot and fails with a list of problems (short `SESSION_SECRET`, missing Google credentials, non-https URL, default DB password).
+- The API validates its configuration on boot and fails with a list of problems (short `SESSION_SECRET`, non-https URL unless `ALLOW_INSECURE_HTTP=true`, default DB password). Google credentials are optional: the administrator signs in with a password, and Google is set up in the admin pages.
 - The frontend binds to `127.0.0.1`; put a TLS reverse proxy (Caddy/Traefik/nginx) in front and forward `X-Forwarded-Proto`.
 - Containers run as non-root, read-only, with capabilities dropped.
 - Pin image tags/digests before deploying (`postgres:17-alpine`, `node:24-alpine`, `nginx-unprivileged:1.31-alpine` are version-tagged, not digest-pinned).
@@ -408,8 +416,11 @@ Still not covered: Docker/Compose itself (the CI job that builds the images, val
 
 | Symptom | Cause |
 |---|---|
-| `Google sign-in is not configured` | `GOOGLE_*` unset; restart the API after editing `.env`. |
-| `redirect_uri_mismatch` from Google | `GOOGLE_REDIRECT_URI` differs from the console entry (scheme, host, port, path). |
+| No "Continue with Google" button | Google is not set up yet: **Administration > Sign-in** (or the `GOOGLE_*` variables). |
+| `redirect_uri_mismatch` from Google | The redirect address in Google's console differs from the one shown under Administration > Sign-in (scheme, host, port, path). Copy it from there. |
+| Cannot sign in and the password is lost | `docker compose exec api node dist/cli.js reset-password you@example.com`. |
+| "Too many wrong passwords" | The account is locked for 15 minutes after 5 wrong tries (doubling on repeats). Wait, or reset the password with the command above. |
+| Setup asks for a code | You are not on the server's own network. The code is in its log: `docker compose logs api \| grep "setup code"`. |
 | `?auth_error=email_in_use` | That email already belongs to an account with a different Google identity; by design it is not linked. |
-| API exits with `Insecure production configuration` | Fix the listed `.env` values. |
-| 403 on every POST | Missing `X-CSRF-Token`, or the browser `Origin` differs from `PUBLIC_URL`. |
+| API exits with `Insecure production configuration` | Fix the listed values (or set `ALLOW_INSECURE_HTTP=true` for a home network). |
+| 403 on every POST | Missing `X-CSRF-Token`, or the page was opened on an address different from the one the server is reached on (a proxy that rewrites the `Host` header). Set the public address under Administration > Sign-in. |

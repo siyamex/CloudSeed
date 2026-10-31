@@ -22,7 +22,7 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/backend/package.json backend/package.json
 COPY --from=build /app/backend/dist backend/dist
 COPY migrations migrations
-RUN mkdir -p /data/storage /data/tmp /downloads /backups && chown -R node:node /data /downloads /backups
+RUN mkdir -p /data/storage /data/tmp /downloads /backups /secrets && chown -R node:node /data /downloads /backups /secrets
 USER node
 WORKDIR /app/backend
 EXPOSE 8080
