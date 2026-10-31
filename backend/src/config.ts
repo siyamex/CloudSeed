@@ -5,7 +5,8 @@ const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().default(8080),
-  PUBLIC_URL: z.string().url().default('http://localhost:8080'),
+  // an empty value counts as "not set" (Compose passes empty strings for unset variables)
+  PUBLIC_URL: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().url().default('http://localhost:8080')),
   LOG_LEVEL: z.string().default('info'),
   /** Max connections per process (API and worker each hold their own pool). Keep (API + worker) * this below Postgres max_connections. */
   DB_POOL_MAX: z.coerce.number().int().min(1).default(10),
@@ -17,6 +18,11 @@ const schema = z.object({
   GOOGLE_REDIRECT_URI: z.string().default(''),
   /** Comma-separated emails that become admin on first verified login. */
   ADMIN_EMAILS: z.string().default(''),
+  /**
+   * Allow serving over plain http (a home network, before a certificate exists). Sign-in cookies are then not marked Secure and the
+   * admin pages warn loudly. Do not use it on a server reachable from the internet without https in front.
+   */
+  ALLOW_INSECURE_HTTP: bool.default(false),
   /**
    * DEVELOPMENT ONLY. Adds a "sign in as a local test user" button that works from this computer without Google. It is refused
    * outright when NODE_ENV=production, and the endpoint answers only to requests that come from the machine itself.
@@ -174,7 +180,18 @@ const schema = z.object({
   MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(2 * 1024 ** 3),
 });
 
-export type Config = z.infer<typeof schema> & { cookieSecure: boolean; adminEmails: string[] };
+export type Config = z.infer<typeof schema> & {
+  cookieSecure: boolean; adminEmails: string[];
+  /** False when no address was given: the server then uses the address each request arrives on, until an administrator sets one. */
+  publicUrlConfigured: boolean;
+};
+
+/** Whether sign-in cookies get the Secure flag: explicit setting, else https addresses (and always in production unless plain http is allowed). */
+export function deriveCookieSecure(c: Pick<z.infer<typeof schema>, 'COOKIE_SECURE' | 'NODE_ENV' | 'ALLOW_INSECURE_HTTP' | 'PUBLIC_URL'>): boolean {
+  if (c.COOKIE_SECURE !== undefined) return c.COOKIE_SECURE;
+  if (c.ALLOW_INSECURE_HTTP) return c.PUBLIC_URL.startsWith('https://');
+  return c.NODE_ENV === 'production';
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
@@ -183,7 +200,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${msg}`);
   }
   const c = parsed.data;
-  const cookieSecure = c.COOKIE_SECURE ?? c.NODE_ENV === 'production';
+  const cookieSecure = deriveCookieSecure(c);
 
   if (c.STORAGE_BACKEND === 's3' && (!c.S3_BUCKET || !c.S3_ACCESS_KEY_ID || !c.S3_SECRET_ACCESS_KEY)) {
     throw new Error('Invalid configuration: STORAGE_BACKEND=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY');
@@ -199,10 +216,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (c.NODE_ENV === 'production') {
     const problems: string[] = [];
     if (c.SESSION_SECRET.length < 32) problems.push('SESSION_SECRET must be at least 32 characters');
-    if (!c.GOOGLE_CLIENT_ID || !c.GOOGLE_CLIENT_SECRET) problems.push('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required');
-    if (!c.GOOGLE_REDIRECT_URI) problems.push('GOOGLE_REDIRECT_URI is required');
-    if (!c.PUBLIC_URL.startsWith('https://')) problems.push('PUBLIC_URL must use https in production');
-    if (!cookieSecure) problems.push('COOKIE_SECURE must not be false in production');
+    // Google sign-in is optional now (the administrator signs in with a password and can set Google up in the admin panel).
+    if (!c.ALLOW_INSECURE_HTTP) {
+      if (!c.PUBLIC_URL.startsWith('https://')) problems.push('PUBLIC_URL must use https in production (or set ALLOW_INSECURE_HTTP=true for a home network)');
+      if (!cookieSecure) problems.push('COOKIE_SECURE must not be false in production');
+    }
     if (!c.ENCRYPTION_KEY || Buffer.from(c.ENCRYPTION_KEY, 'base64').length !== 32) problems.push('ENCRYPTION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)');
     if (c.TELEGRAM_ENABLED && c.TELEGRAM_API_MODE === 'hosted' && !c.TELEGRAM_API_BASE.startsWith('https://')) problems.push('TELEGRAM_API_BASE must use https for the hosted Bot API');
     if (/cloudseed:cloudseed@/.test(c.DATABASE_URL)) problems.push('DATABASE_URL uses the default development credentials');
@@ -213,6 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...c,
     cookieSecure,
     adminEmails: c.ADMIN_EMAILS.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    publicUrlConfigured: typeof env.PUBLIC_URL === 'string' && env.PUBLIC_URL.trim() !== '',
   };
 }
 

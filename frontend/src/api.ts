@@ -51,7 +51,15 @@ export function uploadFile(
   return { promise, abort: () => xhr.abort() };
 }
 
-export interface Me { user: { id: string; email: string; roles: string[]; displayName: string | null; avatarUrl: string | null; theme: string }; csrfToken: string }
+export interface Me { user: { id: string; email: string; roles: string[]; displayName: string | null; avatarUrl: string | null; theme: string; hasPassword: boolean }; csrfToken: string; insecure?: boolean }
+export interface AuthConfig {
+  googleConfigured: boolean; registrationPolicy: string; devLogin?: boolean; needsSetup: boolean; setupCodeRequired: boolean; localLogin: boolean; secureContext: boolean; minPasswordLength: number;
+}
+export interface AdminAuth {
+  publicUrl: { value: string | null; inUse: string; secure: boolean; fromEnvironment: boolean };
+  google: { enabled: boolean; source: 'database' | 'environment' | 'none'; clientId: string; secretSet: boolean; redirectUri: string };
+  local: { accounts: number };
+}
 export interface FileItem { id: string; folderId: string | null; name: string; size: number; mimeType: string; createdAt: string; updatedAt: string; sharingDisabled?: boolean }
 export interface FolderItem { id: string; parentId: string | null; name: string; createdAt: string }
 export interface Listing { folderId: string | null; breadcrumbs: { id: string; name: string }[]; folders: FolderItem[]; files: FileItem[]; nextCursor: string | null }

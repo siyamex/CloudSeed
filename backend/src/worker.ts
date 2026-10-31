@@ -1,5 +1,6 @@
 import pino from 'pino';
 import { loadConfig } from './config.js';
+import { applyRuntimeSettings, watchRuntimeSettings } from './auth/providers.js';
 import { createVault } from './crypto.js';
 import { createPgDb } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -16,6 +17,9 @@ const config = loadConfig();
 const log = pino({ level: config.LOG_LEVEL, redact: ['*.url'] });
 const db = createPgDb(config.DATABASE_URL, config.DB_POOL_MAX);
 if (config.NODE_ENV === 'development') await migrate(db, config.MIGRATIONS_DIR, (m) => log.info(m));
+
+await applyRuntimeSettings(db, config).catch(() => undefined);
+watchRuntimeSettings(db, config); // links in emails follow the public address set in the admin panel
 
 const { storage, adapterFor } = createStorages(config);
 const engine = new DownloadEngine({

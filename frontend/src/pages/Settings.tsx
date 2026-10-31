@@ -23,6 +23,31 @@ const describeAgent = (ua: string | null) => {
   return os ? `${browser} on ${os}` : browser;
 };
 
+function PasswordSection() {
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [again, setAgain] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const change = useMutation({
+    mutationFn: () => api<{ otherSessionsEnded: number }>('/account/password', { method: 'POST', body: { currentPassword: cur, newPassword: next } }),
+    onSuccess: (r) => { setCur(''); setNext(''); setAgain(''); setMsg({ ok: true, text: r.otherSessionsEnded ? `Password changed. ${r.otherSessionsEnded} other session(s) were signed out.` : 'Password changed.' }); },
+    onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'Could not change the password' }),
+  });
+  const mismatch = again.length > 0 && next !== again;
+  return (
+    <Section title="Password" hint="Change the password you sign in with. Every other browser is signed out.">
+      <form className="max-w-sm space-y-3" onSubmit={(e) => { e.preventDefault(); setMsg(null); change.mutate(); }}>
+        <label className="block text-sm">Current password<input className={`${input} mt-1`} type="password" autoComplete="current-password" required value={cur} onChange={(e) => setCur(e.target.value)} /></label>
+        <label className="block text-sm">New password<input className={`${input} mt-1`} type="password" autoComplete="new-password" required minLength={10} value={next} onChange={(e) => setNext(e.target.value)} /></label>
+        <label className="block text-sm">Repeat the new password<input className={`${input} mt-1`} type="password" autoComplete="new-password" required value={again} onChange={(e) => setAgain(e.target.value)} aria-invalid={mismatch} />
+          {mismatch && <span role="alert" className="mt-1 block text-xs text-danger">The two passwords are different.</span>}</label>
+        {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-accent' : 'text-danger'}`}>{msg.text}</p>}
+        <button className={btnPrimary} disabled={change.isPending || mismatch || !cur || next.length < 10}>Change password</button>
+      </form>
+    </Section>
+  );
+}
+
 export function Settings({ me }: { me: Me['user'] }) {
   const qc = useQueryClient();
   const s = useQuery({ queryKey: ['settings'], queryFn: () => api<AccountSettings>('/account/settings') });
@@ -181,6 +206,8 @@ export function Settings({ me }: { me: Me['user'] }) {
           </>
         )}
       </Section>
+
+      {me.hasPassword && <PasswordSection />}
 
       <Section title="Your data">
         <p className="mb-3 text-sm text-muted">Download everything CloudSeed holds about your account as a JSON file: file list, folders, share links, downloads, notifications and activity. Secrets such as Telegram bot tokens are never included, and the files themselves are not (download them from My Files).</p>

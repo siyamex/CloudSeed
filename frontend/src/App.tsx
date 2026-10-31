@@ -106,6 +106,12 @@ function AuthedApp() {
             <button onClick={logout} className="flex items-center gap-1 rounded-md px-2 py-1.5 text-muted hover:bg-line/50"><LogOut size={16} aria-hidden /> Sign out</button>
           </div>
         </header>
+        {me.data.insecure && (
+          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
+            <span>This server is using plain http: passwords and sign-in cookies can be read on the network. Fine at home; before opening it to the internet, add https.</span>
+            <NavLink to="/admin" className="font-medium underline">Set the public address</NavLink>
+          </div>
+        )}
         <main className="min-w-0 flex-1 p-4 md:p-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />

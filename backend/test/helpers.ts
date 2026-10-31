@@ -122,7 +122,7 @@ export interface TestEnv {
 
 export async function createTestEnv(
   env: Record<string, string> = {},
-  over: { storage?: StorageAdapter; storages?: Deps['storages'] } = {},
+  over: { storage?: StorageAdapter; storages?: Deps['storages']; oidc?: Deps['oidc'] } = {},
 ): Promise<TestEnv> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'cloudseed-'));
   const config = loadConfig({
@@ -138,7 +138,7 @@ export async function createTestEnv(
   await migrate(db, MIGRATIONS);
   const idp = await startFakeIdp();
   const storage = new LocalStorage(config.LOCAL_STORAGE_ROOT, config.LOCAL_TMP_DIR);
-  const app = await buildApp({ config, db, storage: over.storage ?? storage, storages: over.storages ?? { local: storage }, oidc: idp.cfg });
+  const app = await buildApp({ config, db, storage: over.storage ?? storage, storages: over.storages ?? { local: storage }, oidc: 'oidc' in over ? over.oidc! : idp.cfg });
   return {
     app, db, config, idp, storage,
     close: async () => { await app.close(); await idp.close(); await db.close(); },

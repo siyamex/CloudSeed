@@ -2,11 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import {
   ApiError, api, formatBytes, formatDuration,
-  type AdminOverview, type AdminQueues, type BackupConfig, type BackupRun, type AdminReport, type AdminUser, type AdminWorker, type AuditEntry,
+  type AdminAuth, type AdminOverview, type AdminQueues, type BackupConfig, type BackupRun, type AdminReport, type AdminUser, type AdminWorker, type AuditEntry,
 } from '../api';
 import { btnDanger, btnGhost, btnPrimary } from '../components/Dialog';
 
-const TABS = ['Overview', 'Users', 'Reports', 'Backups', 'Operations', 'Audit log', 'Settings'] as const;
+const TABS = ['Overview', 'Users', 'Reports', 'Backups', 'Operations', 'Audit log', 'Sign-in', 'Settings'] as const;
 type Tab = (typeof TABS)[number];
 const input = 'rounded-md border border-line bg-bg px-3 py-1.5 text-sm';
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : e ? 'Request failed' : null);
@@ -326,6 +326,75 @@ function Audit() {
   );
 }
 
+function SignIn() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['admin', 'auth'], queryFn: () => api<AdminAuth>('/admin/auth') });
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [secret, setSecret] = useState('');
+  const [url, setUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [check, setCheck] = useState<{ ok: boolean; problems: string[]; note: string } | null>(null);
+  const done = (d: AdminAuth) => { qc.setQueryData(['admin', 'auth'], d); void qc.invalidateQueries({ queryKey: ['auth-config'] }); setSecret(''); setClientId(null); setUrl(null); };
+  const saveGoogle = useMutation({ mutationFn: (b: { clientId: string; clientSecret?: string; enabled: boolean }) => api<AdminAuth>('/admin/auth/google', { method: 'PUT', body: b }), onSuccess: done });
+  const clearGoogle = useMutation({ mutationFn: () => api<AdminAuth>('/admin/auth/google', { method: 'DELETE' }), onSuccess: done });
+  const saveUrl = useMutation({ mutationFn: (u: string) => api<AdminAuth>('/admin/auth/public-url', { method: 'PUT', body: { url: u } }), onSuccess: (d) => { done(d); void qc.invalidateQueries({ queryKey: ['me'] }); } });
+  const test = useMutation({ mutationFn: () => api<{ ok: boolean; problems: string[]; note: string }>('/admin/auth/google/test', { method: 'POST', body: {} }), onSuccess: setCheck });
+  if (q.isPending) return <Loading />;
+  if (q.error) return <p role="alert" className="text-danger">{q.error.message}</p>;
+  const a = q.data, g = a.google;
+  const id = clientId ?? g.clientId;
+  return (
+    <div className="space-y-3">
+      <Card title="Password sign-in">
+        <p className="text-sm">{a.local.accounts} account{a.local.accounts === 1 ? '' : 's'} can sign in with an email and password (the administrator made during setup). This keeps working even if Google sign-in is switched off or misconfigured, so you cannot lock yourself out. Change your password under <strong>Settings</strong>. Forgotten it? On the server run <code className="text-xs">cli reset-password your@email</code>.</p>
+      </Card>
+
+      <Card title="Public address">
+        <form className="space-y-2 text-sm" onSubmit={(e) => { e.preventDefault(); saveUrl.mutate(url ?? ''); }}>
+          <p className="text-muted">The address people type to reach this server. It is used in share links, emails and the Google redirect address. Now using: <strong className="text-fg">{a.publicUrl.inUse}</strong>{a.publicUrl.value === null ? ' (taken from the address of this page: please set it)' : ''}</p>
+          <div className="flex flex-wrap gap-2"><input className={`${input} min-w-0 flex-1`} aria-label="Public address" placeholder="https://cloud.example.com" value={url ?? a.publicUrl.value ?? ''} onChange={(e) => setUrl(e.target.value)} />
+            <button className={btnPrimary} disabled={saveUrl.isPending || url === null}>Save</button></div>
+          {!a.publicUrl.secure && <p role="alert" className="text-xs text-danger">This address is plain http: passwords and sign-in cookies can be read on the network. Fine at home. For the internet, put https in front (a reverse proxy or a tunnel) and enter the https address here.</p>}
+          {saveUrl.error && <p role="alert" className="text-xs text-danger">{errText(saveUrl.error)}</p>}
+        </form>
+      </Card>
+
+      <Card title="Sign in with Google">
+        <form className="space-y-3 text-sm" onSubmit={(e) => { e.preventDefault(); saveGoogle.mutate({ clientId: id.trim(), clientSecret: secret.trim() || undefined, enabled: true }); }}>
+          <p className="text-muted">{g.source === 'none' ? 'Not set up. Anyone can then only sign in with a password.' : g.source === 'environment' ? 'Set by the server\'s environment variables. Saving here overrides them.' : 'Saved here.'} {g.enabled ? <span className="text-accent">Currently on.</span> : <span>Currently off.</span>}</p>
+          <label className="block">Client ID<input className={`${input} mt-1 w-full`} value={id} placeholder="1234-abcd.apps.googleusercontent.com" onChange={(e) => setClientId(e.target.value)} autoComplete="off" spellCheck={false} /></label>
+          <label className="block">Client secret<input className={`${input} mt-1 w-full`} type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder={g.secretSet ? 'Saved. Leave empty to keep it.' : 'GOCSPX-…'} />
+            <span className="mt-1 block text-xs text-muted">Stored encrypted and never shown again.</span></label>
+          <div className="rounded-md border border-line p-3 text-xs"><span className="block text-muted">Add this exactly as an <strong>Authorized redirect URI</strong> in Google:</span>
+            <div className="mt-1 flex flex-wrap items-center gap-2"><code className="break-all">{g.redirectUri}</code>
+              <button type="button" className={btnGhost} onClick={() => { void navigator.clipboard?.writeText(g.redirectUri).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => undefined); }}>{copied ? 'Copied' : 'Copy'}</button></div></div>
+          <div className="flex flex-wrap gap-2">
+            <button className={btnPrimary} disabled={saveGoogle.isPending || !id.trim() || (!secret.trim() && !g.secretSet)}>Save and turn on</button>
+            {g.source !== 'none' && g.enabled && <button type="button" className={btnGhost} disabled={saveGoogle.isPending} onClick={() => saveGoogle.mutate({ clientId: g.clientId, enabled: false })}>Turn off</button>}
+            {g.source === 'database' && <button type="button" className={btnGhost} disabled={clearGoogle.isPending} onClick={() => clearGoogle.mutate()}>Forget these settings</button>}
+            <button type="button" className={btnGhost} disabled={test.isPending} onClick={() => test.mutate()}>Check settings</button>
+          </div>
+          {(saveGoogle.error || clearGoogle.error) && <p role="alert" className="text-xs text-danger">{errText(saveGoogle.error ?? clearGoogle.error)}</p>}
+          {check && (
+            <div role="status" className={`rounded-md border p-3 text-xs ${check.ok ? 'border-accent/40' : 'border-danger/40'}`}>
+              {check.ok ? <p className="text-accent">Everything that can be checked from here looks right.</p> : <ul className="list-disc space-y-1 pl-4 text-danger">{check.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+              <p className="mt-1 text-muted">{check.note}</p>
+            </div>
+          )}
+        </form>
+        <details className="mt-3 text-xs text-muted"><summary className="cursor-pointer">How to get a client ID and secret</summary>
+          <ol className="mt-2 list-decimal space-y-1 pl-4">
+            <li>Open <strong>console.cloud.google.com</strong>, create a project, then <em>APIs &amp; Services → OAuth consent screen</em>: choose <em>External</em> and add yourself under <em>Test users</em>.</li>
+            <li><em>Credentials → Create credentials → OAuth client ID → Web application</em>.</li>
+            <li>Under <em>Authorized redirect URIs</em> add the address shown above, exactly.</li>
+            <li>Copy the Client ID and Client secret into the boxes above and press <em>Save and turn on</em>.</li>
+          </ol>
+          <p className="mt-2">Google accepts plain http only for <code>localhost</code>; for anything else you need an https address.</p></details>
+      </Card>
+    </div>
+  );
+}
+
 function ServerSettings() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['admin', 'settings'], queryFn: () => api<{ settings: { registration_policy: 'open' | 'closed'; default_quota_bytes: number; torrents_enabled: boolean } }>('/admin/settings') });
@@ -379,6 +448,7 @@ export function Admin({ selfId }: { selfId: string }) {
         {tab === 'Backups' && <Backups />}
         {tab === 'Operations' && <Operations />}
         {tab === 'Audit log' && <Audit />}
+        {tab === 'Sign-in' && <SignIn />}
         {tab === 'Settings' && <ServerSettings />}
       </div>
     </div>

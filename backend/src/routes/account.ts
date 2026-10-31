@@ -5,6 +5,7 @@ import { adapterFor, cookieName, requireAuth, type Deps } from '../app.js';
 import { HttpError } from '../errors.js';
 import { deleteObjects, type ObjectRef } from '../files/ops.js';
 import { createVault } from '../crypto.js';
+import { checkPasswordPolicy, setPassword, verifyLocalLogin } from '../auth/local.js';
 import { isKnownKind } from '../notifications/kinds.js';
 import { sendToDestination } from '../telegram/notify.js';
 
@@ -117,6 +118,27 @@ export const accountRoutes = (deps: Deps): FastifyPluginAsync => async (app) => 
     const out = await sendToDestination({ db, vault, config, userId: a.userId, destinationId: dest, text: 'CloudSeed test: notifications will arrive in this chat.' });
     if (!out.ok) throw new HttpError(502, 'telegram_failed', out.reason);
     return { ok: true };
+  });
+
+  /** Change the password of an account that has one (the administrator account made during setup). Signs every other session out. */
+  app.post('/account/password', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const a = requireAuth(req);
+    const b = z.object({ currentPassword: z.string().max(500), newPassword: z.string().max(500) }).strict().parse(req.body);
+    if (!(await db.query(`SELECT 1 FROM local_credentials WHERE user_id = $1`, [a.userId])).rowCount) {
+      throw new HttpError(409, 'no_password', 'This account signs in with Google, so it has no password here.');
+    }
+    const r = await verifyLocalLogin(db, a.email, b.currentPassword);
+    if (!r.ok) {
+      if (r.reason === 'locked') { reply.header('retry-after', String(r.retryAfterSeconds)); throw new HttpError(429, 'too_many_attempts', `Too many wrong passwords. Try again in ${Math.ceil(r.retryAfterSeconds / 60)} minute(s).`); }
+      throw new HttpError(403, 'wrong_password', 'The current password is not correct.');
+    }
+    const problem = checkPasswordPolicy(b.newPassword, a.email);
+    if (problem) throw new HttpError(422, 'weak_password', problem);
+    if (b.newPassword === b.currentPassword) throw new HttpError(422, 'same_password', 'Choose a password that is different from the current one.');
+    await setPassword(db, a.userId, b.newPassword);
+    const out = await db.query(`DELETE FROM sessions WHERE user_id = $1 AND id <> $2`, [a.userId, a.sessionId]);
+    await audit(a.userId, 'account.password_changed', null, req.ip, { otherSessionsEnded: out.rowCount });
+    return { ok: true, otherSessionsEnded: out.rowCount };
   });
 
   // ------------------------------------------------------------------ sessions

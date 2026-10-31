@@ -3,6 +3,8 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { checkPassphrase, createBackup, restoreBackup, verifyBackup } from './backup/backup.js';
 import { restoreDrill } from './backup/drill.js';
+import { randomBytes } from 'node:crypto';
+import { checkPasswordPolicy, setPassword } from './auth/local.js';
 import { loadConfig } from './config.js';
 import { createPgDb } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -19,6 +21,8 @@ const USAGE = `CloudSeed command line tools
   cli reconcile [--delete-orphans] [--fix-quotas] [--grace-hours 24] [--json]
                                                         Compare the database with storage; exits 1 if anything is off
   cli migrate-storage --from local --to s3 [--dry-run] [--delete-originals]
+  cli create-admin <email>                              Create an administrator (or give an existing user a password and admin rights)
+  cli reset-password <email>                            Set a new password for a locked-out account (prints a random one unless NEW_PASSWORD is set)
   cli migrate                                           Apply database migrations
 
 The backup passphrase is read from BACKUP_PASSPHRASE or from the file named by BACKUP_PASSPHRASE_FILE (never from arguments).
@@ -62,6 +66,33 @@ async function main(argv: string[]): Promise<number> {
       case 'migrate': {
         const ran = await migrate(db, config.MIGRATIONS_DIR, say);
         say(ran.length ? `${ran.length} migration(s) applied` : 'database is up to date');
+        return 0;
+      }
+      case 'create-admin':
+      case 'reset-password': {
+        const email = positionals[0]?.trim().toLowerCase();
+        if (!email) throw new Error(`usage: cli ${cmd} <email>`);
+        const given = process.env.NEW_PASSWORD;
+        const password = given ?? randomBytes(15).toString('base64url');
+        const bad = checkPasswordPolicy(password, email);
+        if (bad) throw new Error(`NEW_PASSWORD is not acceptable: ${bad}`);
+        let user = (await db.query<{ id: string }>(`SELECT id FROM users WHERE lower(email) = $1 AND status <> 'deleted'`, [email])).rows[0];
+        if (!user) {
+          if (cmd === 'reset-password') throw new Error(`There is no account for ${email}.`);
+          user = await db.tx(async (t) => {
+            const id = (await t.query<{ id: string }>(`INSERT INTO users (email, email_verified) VALUES ($1, TRUE) RETURNING id`, [email])).rows[0]!.id;
+            await t.query(`INSERT INTO user_profiles (user_id) VALUES ($1)`, [id]);
+            await t.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, 1)`, [id]);
+            await t.query(`INSERT INTO storage_quotas (user_id, quota_bytes) VALUES ($1, $2)`, [id, config.DEFAULT_USER_QUOTA_BYTES]);
+            return { id };
+          });
+        }
+        if (cmd === 'create-admin') await db.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, 2) ON CONFLICT DO NOTHING`, [user.id]);
+        await setPassword(db, user.id, password);
+        await db.query(`DELETE FROM sessions WHERE user_id = $1`, [user.id]); // everyone signed in as this account is signed out
+        await db.query(`INSERT INTO audit_logs (user_id, action) VALUES ($1, $2)`, [user.id, cmd === 'create-admin' ? 'admin.cli_create_admin' : 'admin.cli_reset_password']);
+        say(`${cmd === 'create-admin' ? 'Administrator ready' : 'Password reset'} for ${email}.`);
+        if (!given) say(`New password (shown once, change it after signing in): ${password}`);
         return 0;
       }
       case 'backup': {

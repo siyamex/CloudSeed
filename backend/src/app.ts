@@ -25,6 +25,8 @@ import { torrentRoutes } from './routes/torrents.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { trashRoutes } from './routes/trash.js';
 import { createVault, type Vault } from './crypto.js';
+import { createGoogleStore, type GoogleStore } from './auth/providers.js';
+import { adminAuthRoutes } from './routes/admin-auth.js';
 import type { StorageAdapter } from './storage/types.js';
 
 declare module 'fastify' {
@@ -43,6 +45,8 @@ export interface Deps {
   guard?: Guard;
   /** Encrypts stored credentials; built from config when omitted. */
   vault?: Vault;
+  /** Google sign-in settings (database first, then environment); built when omitted. `oidc` above, when given, overrides it (tests). */
+  google?: GoogleStore;
 }
 
 /** Resolves the adapter that holds a file; fails clearly if that backend is not configured. */
@@ -59,7 +63,9 @@ export function cookieName(cfg: Config) {
   return cfg.cookieSecure ? '__Host-cs_session' : 'cs_session';
 }
 
-export async function buildApp(deps: Deps): Promise<FastifyInstance> {
+export async function buildApp(given: Deps): Promise<FastifyInstance> {
+  const vault = given.vault ?? createVault(given.config);
+  const deps: Deps = { ...given, vault, google: given.google ?? createGoogleStore(given.db, vault, given.config) };
   const { config, db } = deps;
   const app = Fastify({
     logger: config.NODE_ENV === 'test' ? false : {
@@ -95,12 +101,15 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
 
   // Resolve the session, then enforce CSRF + Origin on state-changing requests.
   app.addHook('onRequest', async (req) => {
-    const tok = req.cookies[cookieName(config)];
+    // In home-network mode the address can change from http to https, which renames the cookie; keep honouring the old name then,
+    // so saving a new address does not sign everyone out. (Strict deployments accept only their own, prefixed, name.)
+    const tok = req.cookies[cookieName(config)] ?? (config.ALLOW_INSECURE_HTTP ? req.cookies['cs_session'] ?? req.cookies['__Host-cs_session'] : undefined);
     req.auth = tok ? await loadSession(db, tok) : null;
 
     if (SAFE_METHODS.has(req.method)) return;
     const origin = req.headers.origin;
-    if (origin && origin !== new URL(config.PUBLIC_URL).origin) throw forbidden('Cross-origin request rejected');
+    // Same-origin means the page was served by this very host (the address in the browser), or the configured public address.
+    if (origin && origin !== new URL(config.PUBLIC_URL).origin && !sameHost(origin, req.headers.host)) throw forbidden('Cross-origin request rejected');
     if (req.auth) {
       const sent = req.headers['x-csrf-token'];
       if (typeof sent !== 'string' || !safeEqual(sent, req.auth.csrfToken)) throw forbidden('Missing or invalid CSRF token');
@@ -128,6 +137,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   });
 
   await app.register(authRoutes(deps), { prefix: '/api/v1/auth' });
+  await app.register(adminAuthRoutes(deps), { prefix: '/api/v1' });
   await app.register(fileRoutes(deps), { prefix: '/api/v1' });
   await app.register(trashRoutes(deps), { prefix: '/api/v1' });
   await app.register(shareRoutes(deps), { prefix: '/api/v1' });
@@ -141,6 +151,17 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   await app.register(notificationRoutes(deps), { prefix: '/api/v1' });
   await app.register(dashboardRoutes(deps), { prefix: '/api/v1' });
   return app;
+}
+
+function sameHost(origin: string, host: string | undefined): boolean {
+  try { return !!host && new URL(origin).host.toLowerCase() === host.toLowerCase(); } catch { return false; }
+}
+
+/** The address people reach this server on: the configured one, or (until an administrator sets it) the one this request arrived on. */
+export function publicBase(config: Config, req: { headers: Record<string, string | string[] | undefined>; protocol: string }): string {
+  if (config.publicUrlConfigured) return config.PUBLIC_URL.replace(/\/+$/, '');
+  const proto = String(req.headers['x-forwarded-proto'] ?? req.protocol).split(',')[0]!.trim();
+  return `${proto === 'https' ? 'https' : 'http'}://${req.headers.host ?? new URL(config.PUBLIC_URL).host}`;
 }
 
 export function requireAdmin(req: { auth: AuthContext | null }): AuthContext {
