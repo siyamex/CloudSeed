@@ -67,7 +67,7 @@ export function inputArgs(input: MediaInput, demuxer: string): string[] {
 }
 
 export class Ffmpeg {
-  constructor(private readonly cfg: Pick<Config, 'FFMPEG_PATH' | 'FFPROBE_PATH' | 'MEDIA_PROBE_TIMEOUT_MS' | 'MEDIA_THUMBNAIL_TIMEOUT_MS' | 'MEDIA_THUMBNAIL_WIDTH' | 'MEDIA_TRANSCODE_TIMEOUT_MS'>) {}
+  constructor(private readonly cfg: Pick<Config, 'FFMPEG_PATH' | 'FFPROBE_PATH' | 'MEDIA_PROBE_TIMEOUT_MS' | 'MEDIA_THUMBNAIL_TIMEOUT_MS' | 'MEDIA_THUMBNAIL_WIDTH' | 'MEDIA_TRANSCODE_TIMEOUT_MS'> & Partial<Pick<Config, 'MEDIA_SPRITE_TIMEOUT_MS'>>) {}
 
   async probe(input: MediaInput, demuxer: string, signal?: AbortSignal): Promise<ParsedProbe> {
     const r = await run(this.cfg.FFPROBE_PATH, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(input, demuxer)],
@@ -94,6 +94,20 @@ export class Ffmpeg {
     try { return await attempt(at); } catch (e) { if (at === 0 || (e instanceof FfmpegError && e.code === 'timeout')) throw e; return attempt(0); }
   }
 
+  /**
+   * A grid of small frames for the seek-bar preview: one frame every `intervalSec` seconds, `cols` per row, in a single JPEG.
+   * Frames are exact for videos up to 10 minutes. Longer ones decode only key frames, which keeps a feature film fast at the cost of
+   * showing the nearest earlier key frame (usually within a few seconds).
+   */
+  async sprite(input: MediaInput, demuxer: string, g: SpriteGeometry, signal?: AbortSignal): Promise<Buffer> {
+    const fast = g.intervalSec * g.frames > 600;
+    const args = ['-v', 'error', '-nostdin', ...(fast ? ['-skip_frame', 'nokey'] : []), ...inputArgs(input, demuxer), '-map', '0:v:0',
+      '-vf', `fps=1/${g.intervalSec},scale=${g.tileWidth}:${g.tileHeight},tile=${g.cols}x${g.rows}`, '-frames:v', '1', '-q:v', '6', '-f', 'image2pipe', '-c:v', 'mjpeg', 'pipe:1'];
+    const r = await run(this.cfg.FFMPEG_PATH, args, { timeoutMs: this.cfg.MEDIA_SPRITE_TIMEOUT_MS ?? 300_000, maxStdout: 4 * 1024 * 1024, signal });
+    if (r.code !== 0 || r.stdout.length < 100) throw new FfmpegError('invalid_data', 'No preview sheet could be produced', r.stderr);
+    return r.stdout;
+  }
+
   /** One embedded text subtitle stream as WebVTT. */
   async subtitle(input: MediaInput, demuxer: string, streamIndex: number, signal?: AbortSignal): Promise<string> {
     const r = await run(this.cfg.FFMPEG_PATH, ['-v', 'error', '-nostdin', ...inputArgs(input, demuxer), '-map', `0:${streamIndex}`, '-f', 'webvtt', 'pipe:1'],
@@ -116,6 +130,23 @@ export class Ffmpeg {
     });
     if (r.code !== 0) throw new FfmpegError('invalid_data', 'The conversion failed', r.stderr);
   }
+}
+
+export interface SpriteGeometry { intervalSec: number; cols: number; rows: number; frames: number; tileWidth: number; tileHeight: number }
+
+/**
+ * Picks the grid for a video: at most 100 frames, no more often than every 2 seconds, 160 px wide tiles in the video's own
+ * shape. Returns null for videos too short to need previews.
+ */
+export function spriteGeometry(durationMs: number | null, width: number | null, height: number | null): SpriteGeometry | null {
+  if (!durationMs || !width || !height || durationMs < 20_000) return null;
+  const seconds = durationMs / 1000;
+  const intervalSec = Math.max(2, Math.ceil(seconds / 100));
+  const frames = Math.min(100, Math.ceil(seconds / intervalSec));
+  const tileWidth = 160;
+  const tileHeight = Math.max(2, Math.round((tileWidth * height) / width / 2) * 2); // even, as H.264-family scalers prefer
+  const cols = Math.min(10, frames);
+  return { intervalSec, cols, rows: Math.ceil(frames / cols), frames, tileWidth, tileHeight };
 }
 
 export interface TranscodeProfile { name: string; kind: 'video' | 'audio'; description: string; args(audioIndex?: number): string[] }

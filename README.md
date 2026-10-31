@@ -9,18 +9,20 @@ All six milestones are implemented, apart from the gaps listed below. **Only wha
 | Implemented | Not implemented |
 |---|---|
 | Google OIDC login (auth-code + PKCE, state, nonce, JWKS signature/issuer/audience, `email_verified`) | BitTorrent/magnet downloads |
-| Server-side sessions, CSRF + Origin checks, rate limiting, RBAC roles, audit log | Sharing whole folders (only single files can be shared) |
+| Server-side sessions, CSRF + Origin checks, rate limiting, RBAC roles, audit log | Sharing of several unrelated items in one link (a link is one file or one folder) |
 | Folders and files: streamed upload, Range download, rename, move, delete, search, filter, sort, pagination, trash with retention | Two-factor authentication (sign-in is whatever Google enforces) |
 | Per-user quota with atomic enforcement; max file size | Antivirus scanning of uploads and downloads |
 | Local filesystem and S3-compatible storage, plus a verified local → S3 migration tool | Authenticated download sources (by design) |
-| Remote HTTP/HTTPS downloads: Postgres-backed queue, separate worker, pause/resume/cancel/retry, priorities, Range resume, SHA-256 check, backoff, crash recovery, live progress, SSRF protection, per-user limits | Telegram *notifications* (Telegram is used to deliver files, not to notify) |
-| Telegram via the official Bot API: encrypted bot tokens, real permission checks, albums, captions, oversize files as numbered parts **or** as an expiring download link, flood-limit pacing, no-duplicate rule for unknown deliveries, history | Media: scrub-preview thumbnails, adaptive/live streaming, image-based subtitles |
+| Remote HTTP/HTTPS downloads: Postgres-backed queue, separate worker, pause/resume/cancel/retry, priorities, Range resume, SHA-256 check, backoff, crash recovery, live progress, SSRF protection, per-user limits | Notifications to anything except the app, email and Telegram (no push, SMS or webhooks) |
+| Telegram via the official Bot API: encrypted bot tokens, real permission checks, albums, captions, oversize files as numbered parts **or** as an expiring download link, flood-limit pacing, no-duplicate rule for unknown deliveries, history | Media: adaptive/live streaming, image-based subtitles, choosing an audio track in the browser, hardware-accelerated conversion |
 | Media library: FFmpeg indexing, thumbnails, subtitles, Range streaming, resume, optional conversion to MP4/AAC | Redis (deliberately not used: the queue lives in PostgreSQL) |
-| **Sharing**: hash-only tokens, always-expiring links, optional password, download limits, public or sign-in-only, revoke, abuse reports | Per-link access logs beyond counts and last access |
-| **Notifications**: in-app bell, per-kind muting, optional email over SMTP with retry and a per-user hourly cap, quota and expiring-link warnings | Push / SMS notifications |
+| **Sharing** of files **and folders** (browse, download single files, or the whole folder as a ZIP): hash-only tokens, always-expiring links, optional password, download limits, public or sign-in-only, revoke, abuse reports | Per-link access logs beyond counts and last access |
+| **Notifications**: in-app bell, per-kind muting, optional email over SMTP and optional posting to your own Telegram chat, each with retry and a per-user hourly cap; quota, expiring-link and backup warnings | Native mobile apps, background upload queues, receiving files shared from other phone apps |
 | **Account**: settings, active sessions with revoke, JSON data export, account deletion | |
 | **Administration**: users (disable, roles, quota), abuse review, queue and worker health, audit log, runtime settings, `/health/ready`, Prometheus `/metrics` | |
-| **Backups**: encrypted, snapshot-consistent backup / verify / restore, reconcile, storage migration (command line) | Scheduled backups (use cron or your scheduler; see below) |
+| **Backups**: encrypted, snapshot-consistent; scheduled by the worker with retention and read-back verification; admin page and alerts; restore, restore test, reconcile, storage migration (command line) | Copying backups off the machine (you do that), restoring from the web UI |
+| **Installable app (PWA)**: manifest, icons, offline-capable app shell | |
+| **Media seek-bar previews**: picture previews while you hover or drag the timeline | |
 
 ## Quick start (Docker)
 
@@ -162,7 +164,11 @@ FFmpeg is installed in the Docker image (`apk add ffmpeg`). Outside Docker, inst
 
 ### Not built
 
-Scrubbing preview thumbnails, adaptive streaming, live transcoding, image-based subtitles, selecting audio tracks in most browsers, and per-user transcoding quotas beyond the storage quota.
+Adaptive streaming, live transcoding, image-based subtitles, selecting an audio track in the browser (the track list is shown; switching works only through a converted copy), hardware-accelerated conversion (VAAPI/NVENC/QSV: not attempted, because it cannot be tested here), and per-user transcoding quotas beyond the storage quota.
+
+### Seek-bar previews
+
+For videos of 20 seconds or more the worker makes one sheet of small frames (at most 100, one every 2 seconds or more, 160 px wide, a few tens of KB, counted against the owner's quota). The player shows a **timeline under the video** where hovering or dragging displays the frame at that point and clicking jumps there; it works with touch and the keyboard (arrows, Home, End). Frames are exact for videos up to 10 minutes; for longer ones only key frames are decoded (so a feature film is processed in reasonable time) and the preview shows the nearest earlier key frame. Turn off with `MEDIA_SPRITES_ENABLED=false`. Videos indexed before this feature have no sheet until they are re-indexed (rename or re-upload the file).
 
 ### Checked in a real browser (Milestone 6 screens)
 
@@ -174,7 +180,7 @@ During development the UI was driven in headless Chromium against a real stack (
 
 ## Sharing
 
-Any file you own can be shared from **My Files** (the share icon). Links are for single files.
+Any file **or folder** you own can be shared from **My Files** (the share icon). A folder link opens a small browser: visitors move through sub-folders, download single files, or download everything below the current folder as one **ZIP** (a ZIP counts as one download, and so does each single file). Files with sharing switched off or in the trash are left out, files added later appear automatically, and trashing the folder stops the link. ZIPs are streamed and not compressed, hold at most `SHARING_ZIP_MAX_FILES` (10,000) files and about 4 GiB (classic ZIP, no ZIP64: bigger folders must be downloaded file by file), and empty folders are not included.
 
 - **Always expire.** You pick a lifetime from 1 hour up to `SHARING_MAX_DAYS` (default 365). There is no permanent link.
 - **The token is shown once.** Only its SHA-256 is stored, so neither the database, a backup nor an administrator can recover a link. Lose it and you create a new one.
@@ -192,6 +198,8 @@ Telegram offers the same links as an alternative when a file is too large to upl
 
 The bell in the header shows in-app notifications (download finished or failed, Telegram transfer result, storage nearly full, a link about to expire, a link disabled by an administrator, the bot disconnected). Each kind can be muted in **Settings**.
 
+Notifications can also be **posted to Telegram**, through your own bot (see *Telegram*): under Settings pick one of your destinations and press *Send a test message*. Titles and details (such as file names) go to that chat, so choose a chat only you can read. They share the chat's sending pace with file transfers, are capped at `TELEGRAM_NOTIFY_MAX_PER_HOUR` (30) per user, and are retried with back-off up to three times.
+
 Email is **optional and off until you configure SMTP**:
 
 ```
@@ -205,6 +213,10 @@ Users then opt in under Settings → Notifications. A worker process emails each
 The same worker raises a *storage almost full* warning at `QUOTA_WARNING_PERCENT` (90 %, at most once a day), warns a day before a share link expires, removes notifications older than `NOTIFICATION_RETENTION_DAYS` (90) and clears expired sessions.
 
 > **Tested against a local SMTP test server only**, using an unencrypted connection (`SMTP_REQUIRE_TLS=false` in the tests). STARTTLS / implicit TLS and delivery through a real provider have not been exercised. Send yourself a test notification after configuring it.
+
+## Install as an app
+
+Over https (or on localhost) browsers offer to **install CloudSeed** (Chrome/Edge: the install icon in the address bar; Android: *Add to Home screen*; iOS Safari: *Share > Add to Home Screen*). It then opens in its own window with its own icon, and has shortcuts to My Files and Downloads. A small service worker caches only the app's own static files so it starts instantly and shows its screens offline; **it never caches or answers API requests**, so files, downloads, shares and sign-in always go to the server, and nothing you own is stored by it. While offline the app opens but says it cannot reach the server. Uploading from a phone works through the normal file picker (which offers the camera and photo library); there is no background upload queue, and uploads stop if you close the app. Not tested on iOS or in Firefox.
 
 ## Account settings
 
@@ -288,7 +300,7 @@ CasaOS runs Docker Compose files, so CloudSeed installs from the published image
 1. **You need an https address.** Google sign-in refuses plain `http://192.168.x.x` addresses, and the app refuses to start in production mode without https. Use a domain you control with a Cloudflare Tunnel, Tailscale Funnel/Serve with a certificate, or Nginx Proxy Manager (also in the CasaOS app store) pointing at CasaOS port **8089**. Forward `X-Forwarded-Proto: https`.
 2. **Create Google credentials** (see *Google sign-in setup*). The redirect URI is `https://your-domain/api/v1/auth/google/callback`.
 3. **Generate two secrets** on any machine: `openssl rand -base64 48` (SESSION_SECRET) and `openssl rand -base64 32` (ENCRYPTION_KEY). Save a copy of the second one somewhere safe.
-4. In CasaOS choose **App Store > Custom Install (top right) > Import**, paste `casaos/docker-compose.yml`, and replace every `CHANGE-ME` (domain, Google ID and secret, your email in `ADMIN_EMAILS`, the two secrets, the database password, which appears twice and must match). Install.
+4. In CasaOS choose **App Store > Custom Install (top right) > Import**, paste `casaos/docker-compose.yml`, and replace every `CHANGE-ME` (domain, Google ID and secret, your email in `ADMIN_EMAILS`, the two secrets, the backup passphrase, and the database password, which appears twice and must match). Install.
 5. Open your https address and sign in with the Google account listed in `ADMIN_EMAILS`: that account becomes the administrator.
 
 Data lives under `/DATA/AppData/cloudseed/` (`pgdata`, `storage`, `downloads`). Back up with the CLI: `docker exec -e BACKUP_PASSPHRASE='...' cloudseed-api node dist/cli.js backup --out /data/backup.csbk`, then copy the file off the machine. To update, pull the new image in CasaOS (or `docker compose pull && up -d`); migrations run automatically.

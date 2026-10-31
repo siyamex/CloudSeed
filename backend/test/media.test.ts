@@ -517,3 +517,70 @@ describe('S3-compatible storage (FFmpeg reads through a private presigned URL)',
     } finally { await eng.stop(); await env.close(); }
   }, 120_000);
 });
+
+// =============================================================== scrub-preview sheets
+describe('seek-bar preview sheets', () => {
+  const jpegSize = (b: Buffer) => { // reads width and height from the JPEG's start-of-frame marker
+    for (let i = 2; i < b.length - 9;) {
+      if (b[i] !== 0xff) { i++; continue; }
+      const m = b[i + 1]!;
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) };
+      i += 2 + b.readUInt16BE(i + 2);
+    }
+    throw new Error('not a JPEG');
+  };
+
+  it('chooses a sensible grid: none for short clips, at most 100 frames, tiles in the video\'s own shape', async () => {
+    const { spriteGeometry } = await import('../src/media/ffmpeg.js');
+    expect(spriteGeometry(19_000, 1920, 1080)).toBeNull();
+    expect(spriteGeometry(null, 1920, 1080)).toBeNull();
+    expect(spriteGeometry(40_000, 240, 180)).toEqual({ intervalSec: 2, frames: 20, cols: 10, rows: 2, tileWidth: 160, tileHeight: 120 });
+    const movie = spriteGeometry(2 * 3600 * 1000, 1920, 1080)!;
+    expect(movie.frames).toBeLessThanOrEqual(100);
+    expect(movie.intervalSec * movie.frames).toBeGreaterThanOrEqual(7190);
+    expect(movie).toMatchObject({ cols: 10, rows: 10, tileWidth: 160, tileHeight: 90 });
+    expect(spriteGeometry(60_000, 1000, 1001)!.tileHeight % 2).toBe(0);
+  });
+
+  it('creates one sheet for a longer video, sized exactly as described, private to its owner and charged to the quota', async () => {
+    const s = await user();
+    const { id, d } = await indexed(s, 'long.webm');
+    expect(d.status).toBe('ready');
+    const frames = Math.ceil(d.durationMs / 1000 / 2); // ~40 s at one frame every 2 s (the probed length is a hair over 40 s)
+    expect(d.sprite).toEqual({ intervalSec: 2, frames, cols: 10, rows: Math.ceil(frames / 10), tileWidth: 160, tileHeight: 120 });
+    const r = await get(s, `/media/${id}/sprite`);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toBe('image/jpeg');
+    expect(r.headers['cache-control']).toBe('private, max-age=3600');
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(jpegSize(r.rawPayload)).toEqual({ w: 1600, h: 120 * d.sprite.rows });
+    const assets = await assetRows(id);
+    expect(assets.map((a: any) => a.kind).sort()).toEqual(['sprite', 'thumbnail']);
+    expect(await used(s)).toBe(fx.files['long.webm']!.length + assets.reduce((n: number, a: any) => n + Number(a.size_bytes), 0));
+    expect((await get(await user(), `/media/${id}/sprite`)).statusCode).toBe(404); // someone else's file
+    expect((await get(null, `/media/${id}/sprite`)).statusCode).toBe(401);
+  });
+
+  it('makes no sheet for short clips, and none when switched off', async () => {
+    const s = await user();
+    const short = await indexed(s, 'clip.webm');
+    expect(short.d.sprite).toBeNull();
+    expect((await get(s, `/media/${short.id}/sprite`)).statusCode).toBe(404);
+    const id = await put(s, 'long2.webm', fx.files['long.webm']!);
+    const e = mkEngine({ MEDIA_SPRITES_ENABLED: false }); e.start();
+    const d = await settled(s, id);
+    expect(d.sprite).toBeNull();
+    expect((await assetRows(id)).map((a: any) => a.kind)).toEqual(['thumbnail']);
+  });
+
+  it('removes the sheet, and its quota charge, when the file is deleted for good', async () => {
+    const s = await user();
+    const before = await used(s);
+    const { id } = await indexed(s, 'long.webm');
+    expect(await used(s)).toBeGreaterThan(before);
+    await call(s, 'DELETE', `/files/${id}`);
+    await call(s, 'POST', '/trash/purge', { fileIds: [id], folderIds: [] });
+    expect(await assetRows(id)).toEqual([]);
+    expect(await used(s)).toBe(before);
+  });
+});

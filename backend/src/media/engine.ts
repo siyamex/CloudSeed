@@ -8,7 +8,7 @@ import { backoffMs } from '../downloads/state.js';
 import type { StorageAdapter } from '../storage/types.js';
 import { deleteReplaced, storeAsset } from './assets.js';
 import { MEDIA_EXTENSIONS, formatFor } from './classify.js';
-import { Ffmpeg, FfmpegError, TRANSCODE_PROFILES, type MediaInput } from './ffmpeg.js';
+import { Ffmpeg, FfmpegError, TRANSCODE_PROFILES, spriteGeometry, type MediaInput } from './ffmpeg.js';
 
 export interface Logger {
   info(o: object, msg?: string): void;
@@ -203,6 +203,15 @@ export class MediaEngine {
           const st = await storeAsset(this.db, this.o.storage, { fileId: m.file_id, userId: m.user_id, kind: 'thumbnail', variant: '', mime: 'image/jpeg', data: jpeg, maxBytes: 2 * 1024 * 1024 });
           await deleteReplaced(st, this.o.adapterFor);
         } catch (e) { if (ac.signal.aborted) throw e; this.o.log.warn({ code: (e as FfmpegError).code ?? 'error', fileId: m.file_id }, 'thumbnail not created'); }
+      }
+      const geo = this.cfg.MEDIA_SPRITES_ENABLED && p.hasVideo ? spriteGeometry(p.durationMs, p.width, p.height) : null;
+      if (geo) {
+        try {
+          const jpeg = await this.ffmpeg.sprite(input, fmt.demuxer, geo, ac.signal);
+          const st = await storeAsset(this.db, this.o.storage, { fileId: m.file_id, userId: m.user_id, kind: 'sprite', variant: '', mime: 'image/jpeg', data: jpeg, maxBytes: 4 * 1024 * 1024 });
+          await this.db.query(`UPDATE media_metadata SET sprite = $2 WHERE file_id = $1`, [m.file_id, JSON.stringify(geo)]);
+          await deleteReplaced(st, this.o.adapterFor);
+        } catch (e) { if (ac.signal.aborted) throw e; this.o.log.warn({ code: (e as FfmpegError).code ?? 'error', fileId: m.file_id }, 'preview sheet not created'); }
       }
       for (const s of p.streams.filter((x) => x.type === 'subtitle' && x.extractable).slice(0, MAX_SUBTITLE_TRACKS)) {
         try {

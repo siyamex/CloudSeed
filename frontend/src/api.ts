@@ -108,7 +108,9 @@ export interface MediaItem {
   videoCodec: string | null; audioCodec: string | null; bitrate: number | null; artist: string | null; album: string | null; hasThumbnail: boolean;
   progress: { positionMs: number; durationMs: number | null; completed: boolean; updatedAt: string | null } | null;
 }
+export interface SpriteInfo { intervalSec: number; cols: number; rows: number; frames: number; tileWidth: number; tileHeight: number }
 export interface MediaDetail extends MediaItem {
+  sprite: SpriteInfo | null;
   audioTracks: { index: number; codec: string | null; language: string | null; title: string | null; channels: number | null; default: boolean }[];
   subtitles: { id: string; source: 'embedded' | 'file'; label: string; language: string | null; available: boolean; reason?: string; linkId?: string }[];
   playback: { mode: 'direct' | 'maybe' | 'transcode'; reason: string | null };

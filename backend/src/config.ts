@@ -129,6 +129,9 @@ const schema = z.object({
   MEDIA_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(3),
   MEDIA_PROBE_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MEDIA_THUMBNAIL_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  /** Make a grid of small frames for the seek-bar preview of longer videos. */
+  MEDIA_SPRITES_ENABLED: bool.default(true),
+  MEDIA_SPRITE_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   MEDIA_THUMBNAIL_WIDTH: z.coerce.number().int().min(16).max(1280).default(320),
   MEDIA_LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   /** Transcoding is CPU-heavy, so it is off by default. */

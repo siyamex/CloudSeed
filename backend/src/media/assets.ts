@@ -4,7 +4,7 @@ import type { Db } from '../db/index.js';
 import { HttpError } from '../errors.js';
 import type { StorageAdapter } from '../storage/types.js';
 
-export type AssetKind = 'thumbnail' | 'subtitle' | 'rendition';
+export type AssetKind = 'thumbnail' | 'subtitle' | 'rendition' | 'sprite';
 
 export interface StoreAssetInput {
   fileId: string;

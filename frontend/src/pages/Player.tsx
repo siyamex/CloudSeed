@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, Download, Info, Keyboard, Maximize, PictureInPicture2, RefreshCw, Wand2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { PreviewTimeline } from '../components/PreviewTimeline';
 import { ApiError, api, formatBytes, formatClock, type MediaDetail } from '../api';
 import { btnGhost, btnPrimary } from '../components/Dialog';
 
@@ -211,6 +212,7 @@ export function Player() {
           )}
         </div>
       )}
+      {!unreadable && isVideo && d.sprite && <PreviewTimeline media={ref} spriteUrl={`/api/v1/media/${id}/sprite`} sprite={d.sprite} fallbackDurationMs={d.durationMs} />}
 
       {resumedAt !== null && (
         <p role="status" className="flex items-center gap-2 text-sm text-muted">Resumed from {formatClock(resumedAt)}.

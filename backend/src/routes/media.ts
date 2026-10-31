@@ -126,9 +126,11 @@ export const mediaRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
       if (m && !seen.has(f.id)) subtitles.push({ id: `ext-${f.id}`, source: 'file', label: f.name, language: m.language, available: true });
     }
 
+    const sprite = ready('sprite', '') ? (await db.query<{ sprite: unknown }>('SELECT sprite FROM media_metadata WHERE file_id = $1', [id])).rows[0]?.sprite ?? null : null;
     const probe = { container: r.container, videoCodec: r.video_codec, audioCodec: r.audio_codec, hasVideo: r.kind === 'video' && r.video_codec !== null, hasAudio: r.audio_codec !== null };
     return {
       ...item,
+      sprite,
       audioTracks: streams.filter((x) => x.type === 'audio').map((x) => ({ index: x.index, codec: x.codec, language: x.language, title: x.title, channels: x.channels ?? null, default: x.default })),
       subtitles,
       playback: r.status === 'ready' ? playability(r.name, probe) : { mode: r.status === 'pending' || r.status === 'processing' ? 'direct' : 'transcode', reason: r.status === 'unsupported' ? r.error_message : null },
@@ -169,6 +171,18 @@ export const mediaRoutes = (deps: Deps): FastifyPluginAsync => async (app) => {
     const t = (await db.query<{ storage_key: string; storage_provider_kind: string; size_bytes: number }>(
       `SELECT storage_key, storage_provider_kind, size_bytes FROM media_assets WHERE file_id = $1 AND user_id = $2 AND kind = 'thumbnail' AND status = 'ready'`, [id, a.userId])).rows[0];
     if (!t) throw notFound('No thumbnail');
+    return serveObject(reply, ad(t.storage_provider_kind), t.storage_key, {
+      size: Number(t.size_bytes), mime: 'image/jpeg', disposition: 'inline', rangeHeader: undefined, cacheControl: 'private, max-age=3600',
+    });
+  });
+
+  app.get('/media/:id/sprite', async (req, reply) => {
+    const a = requireAuth(req);
+    const { id } = z.object({ id: uuid }).parse(req.params);
+    await ownedMedia(a.userId, id);
+    const t = (await db.query<{ storage_key: string; storage_provider_kind: string; size_bytes: number }>(
+      `SELECT storage_key, storage_provider_kind, size_bytes FROM media_assets WHERE file_id = $1 AND user_id = $2 AND kind = 'sprite' AND status = 'ready'`, [id, a.userId])).rows[0];
+    if (!t) throw notFound('No preview sheet');
     return serveObject(reply, ad(t.storage_provider_kind), t.storage_key, {
       size: Number(t.size_bytes), mime: 'image/jpeg', disposition: 'inline', rangeHeader: undefined, cacheControl: 'private, max-age=3600',
     });
