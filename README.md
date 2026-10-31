@@ -1,6 +1,72 @@
-# CloudSeed
+<div align="center">
 
-Self-hosted cloud file manager with Google sign-in, quotas, a remote download engine, Telegram delivery, a media library with streaming, secure sharing, an admin area, notifications, and encrypted backups.
+# ☁️ CloudSeed
+
+**Your own cloud: files, downloads, streaming and sharing on a server you control.**
+
+A self-hosted file manager with a liquid-glass interface, a remote download engine (links, magnets and torrent files), a streaming media library, archive browsing, secure sharing, Telegram delivery and encrypted backups.
+
+[![CI](https://github.com/siyamex/CloudSeed/actions/workflows/ci.yml/badge.svg)](https://github.com/siyamex/CloudSeed/actions/workflows/ci.yml)
+[![Publish images](https://github.com/siyamex/CloudSeed/actions/workflows/publish.yml/badge.svg)](https://github.com/siyamex/CloudSeed/actions/workflows/publish.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Docker Hub](https://img.shields.io/badge/docker%20hub-siyamexcom-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/u/siyamexcom)
+[![Docker pulls](https://img.shields.io/docker/pulls/siyamexcom/cloudseed-api?logo=docker&logoColor=white&label=pulls)](https://hub.docker.com/r/siyamexcom/cloudseed-api)
+
+![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![Fastify](https://img.shields.io/badge/Fastify-5-000000?logo=fastify&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-4169E1?logo=postgresql&logoColor=white)
+![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8?logo=pwa&logoColor=white)
+
+[Quick start](#quick-start-docker) · [Screenshots](#screenshots) · [Features](#features) · [Status](#status) · [Try it without Docker](#try-it-on-your-computer-without-docker) · [Security](#security-notes) · [Troubleshooting](#troubleshooting)
+
+<img src="docs/screenshots/dashboard-light.png" alt="CloudSeed dashboard in the light theme" width="900">
+
+</div>
+
+## Screenshots
+
+The interface follows a frosted "liquid glass" style in a light and a dark theme, and falls back to solid panels when the system asks for reduced transparency or high contrast. These pictures come from the local demo stack (`npm run ui-stack`), so the file names are sample data.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/files-light.png" alt="My Files, light theme"><br><sub><b>📁 My Files</b>: folders, search, sort, copy, move, share, send to Telegram</sub></td>
+    <td width="50%"><img src="docs/screenshots/files-dark.png" alt="My Files, dark theme"><br><sub><b>🌙 Dark theme</b>: the same screen after switching themes</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/media-light.png" alt="Media library"><br><sub><b>🎬 Media library</b>: thumbnails, resume, search by title or artist</sub></td>
+    <td width="50%"><img src="docs/screenshots/player-light.png" alt="Video player with speed, subtitles and quality"><br><sub><b>▶️ Player</b>: speed, subtitles, quality picker, pop-out, shortcuts</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/archive-light.png" alt="Browsing inside a ZIP file"><br><sub><b>📦 Archives</b>: browse ZIP, 7Z and RAR without unpacking, extract a selection</sub></td>
+    <td width="50%"><img src="docs/screenshots/tv-mode.png" alt="TV mode"><br><sub><b>📺 TV mode</b>: big tiles and remote-control navigation for smart-TV browsers</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/dashboard-dark.png" alt="Dashboard, dark theme"><br><sub><b>📊 Dashboard</b>: quota, downloads, Telegram, storage use, recent files</sub></td>
+    <td width="50%"><img src="docs/screenshots/login-light.png" alt="Sign-in page"><br><sub><b>🔐 Sign-in</b>: administrator password, optional Google sign-in</sub></td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/dashboard-phone.png" alt="Dashboard on a phone" width="260"><br><sub><b>📱 Phones</b>: the layout adapts, and the app can be installed from the browser</sub></p>
+
+## Features
+
+| | |
+|---|---|
+| ⬇️ **Cloud downloading** | Paste a link, a magnet link or a `.torrent` file; a separate worker fetches it with pause, resume, retries and a checksum check, then stores it in your quota. |
+| 🎬 **Streaming and media** | Range streaming, subtitles, playback speed, quality picker (original or converted copies), resume where you stopped, seek-bar previews, thumbnails. |
+| 📁 **File management** | Folders, rename, move, **copy**, search, sort, bulk actions, trash with retention, per-user quota. |
+| 📦 **Archives** | Look inside ZIP, 7Z and RAR files without unpacking them; download one entry or extract a selection, with zip-bomb protection. |
+| 📺 **Any device** | Responsive web app, installable as an app (PWA), and a remote-friendly **TV mode** that smart-TV browsers open by themselves. |
+| 🔗 **Sharing** | Links for files and folders with expiry, optional password, download limits, revoke and abuse reports. |
+| ✈️ **Telegram** | Send files to your groups and channels through a bot you own, with parts for oversize files. |
+| 🔔 **Notifications** | In-app bell, optional email and Telegram, quota and expiry warnings. |
+| 🛡️ **Security** | Sessions and CSRF protection, rate limits, roles, audit log, SSRF-safe downloads, hostile-archive guards, encrypted secrets. |
+| 🗄️ **Backups** | Scheduled, encrypted, verified backups with a restore and restore-test command. |
+| 🛠️ **Admin** | Users, quotas, queues, health, metrics, runtime settings, Google sign-in and public address, all from the web pages. |
+| 🐳 **Easy install** | One command, no `.env`: the server creates its own secrets and asks you to create the administrator on first visit. |
 
 ## Status
 

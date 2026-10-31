@@ -6,3 +6,4 @@ data/
 .gstack/
 ui-stack.json
 *.csbk
+ui-stack*.json
